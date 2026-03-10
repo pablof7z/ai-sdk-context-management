@@ -12,6 +12,28 @@ import { createDefaultEstimator } from "./token-estimator.js";
 import { applyRuleBasedCompression } from "./rule-based-compressor.js";
 import { hashMessages } from "./cache.js";
 
+const objectIdentityMap = new WeakMap<object, number>();
+let nextObjectIdentity = 1;
+
+function getObjectIdentity(value: object | undefined): number | undefined {
+  if (!value) return undefined;
+
+  const existing = objectIdentityMap.get(value);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const identity = nextObjectIdentity++;
+  objectIdentityMap.set(value, identity);
+  return identity;
+}
+
+function sortToolOverrides(toolOverrides: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(toolOverrides).sort(([left], [right]) => left.localeCompare(right))
+  );
+}
+
 /**
  * Create the context management middleware.
  *
@@ -44,10 +66,23 @@ export function contextManagement(config: ContextManagementConfig): LanguageMode
     recentFullCount: config.toolOutput?.recentFullCount || 2,
     toolOverrides: config.toolOutput?.toolOverrides || {},
   };
+  const cacheScope = {
+    maxTokens,
+    ruleBasedThreshold,
+    llmThreshold,
+    protectedTailCount,
+    toolOutput: {
+      ...toolOutput,
+      toolOverrides: sortToolOverrides(toolOutput.toolOverrides),
+    },
+    estimatorId: getObjectIdentity(estimator as object),
+    llmCompressorId: getObjectIdentity(llmCompressor as object | undefined),
+    truncationHookId: getObjectIdentity(onToolOutputTruncated as object | undefined),
+  };
 
   return {
     specificationVersion: "v3" as const,
-    async transformParams({ params, type }) {
+    async transformParams({ params, type, model }) {
       const startTime = Date.now();
       const prompt = params.prompt as LanguageModelV3Message[];
 
@@ -73,7 +108,7 @@ export function contextManagement(config: ContextManagementConfig): LanguageMode
 
       // Check cache
       if (cache) {
-        const cacheKey = hashMessages(prompt);
+        const cacheKey = hashMessages([cacheScope, `${model.provider}:${model.modelId}`, prompt]);
         const cached = cache.get(cacheKey);
         if (cached) {
           emitDebug(onDebug, {
@@ -218,7 +253,7 @@ export function contextManagement(config: ContextManagementConfig): LanguageMode
       };
 
       if (cache) {
-        const cacheKey = hashMessages(prompt);
+        const cacheKey = hashMessages([cacheScope, `${model.provider}:${model.modelId}`, prompt]);
         cache.set(cacheKey, result);
       }
 
