@@ -2,11 +2,12 @@ import type { CompressionSegment, SegmentGenerationInput, SegmentGenerator } fro
 
 export interface CreateSegmentGeneratorConfig {
   generate: (prompt: string) => Promise<string>;
+  promptTemplate?: string;
   buildPrompt?: (input: SegmentGenerationInput) => string;
   parse?: (response: string, input: SegmentGenerationInput) => CompressionSegment[];
 }
 
-const DEFAULT_PROMPT_TEMPLATE = `You compress conversation history into 1 or more replacement segments.
+export const DEFAULT_SEGMENT_PROMPT_TEMPLATE = `You compress conversation history into 1 or more replacement segments.
 Return strict JSON with this shape:
 {"segments":[{"fromId":"<id>","toId":"<id>","compressed":"<summary>"}]}
 
@@ -22,8 +23,11 @@ Transcript ids run from {{firstId}} to {{lastId}}.
 Transcript:
 {{transcript}}`;
 
-function buildDefaultPrompt(input: SegmentGenerationInput): string {
-  return DEFAULT_PROMPT_TEMPLATE
+export function buildDefaultSegmentPrompt(
+  input: SegmentGenerationInput,
+  promptTemplate = DEFAULT_SEGMENT_PROMPT_TEMPLATE
+): string {
+  return promptTemplate
     .replace("{{targetTokens}}", String(input.targetTokens))
     .replace("{{firstId}}", input.transcript.firstId ?? "none")
     .replace("{{lastId}}", input.transcript.lastId ?? "none")
@@ -63,7 +67,9 @@ function parseDefaultResponse(response: string, input: SegmentGenerationInput): 
 export function createSegmentGenerator(config: CreateSegmentGeneratorConfig): SegmentGenerator {
   return {
     async generate(input: SegmentGenerationInput): Promise<CompressionSegment[]> {
-      const prompt = config.buildPrompt ? config.buildPrompt(input) : buildDefaultPrompt(input);
+      const prompt = config.buildPrompt
+        ? config.buildPrompt(input)
+        : buildDefaultSegmentPrompt(input, config.promptTemplate);
       const response = await config.generate(prompt);
       const parser = config.parse ?? parseDefaultResponse;
       return parser(response, input);

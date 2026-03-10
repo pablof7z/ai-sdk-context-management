@@ -2,7 +2,11 @@ export { manageContext } from "./manage-context.js";
 export { createContextManagementMiddleware, contextManagement } from "./middleware.js";
 export { createTranscript, defaultTranscriptRenderer } from "./transcript.js";
 export { applySegments, validateSegments, buildSummaryMessage } from "./segments.js";
-export { createSegmentGenerator } from "./segment-generator.js";
+export {
+  buildDefaultSegmentPrompt,
+  createSegmentGenerator,
+  DEFAULT_SEGMENT_PROMPT_TEMPLATE,
+} from "./segment-generator.js";
 export { applyToolPolicy, applyToolOutputPolicy, defaultToolPolicy } from "./rule-based-compressor.js";
 export { normalizeMessages, promptToContextMessages, contextMessagesToPrompt } from "./messages.js";
 export { createDefaultEstimator } from "./token-estimator.js";

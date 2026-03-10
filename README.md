@@ -224,6 +224,46 @@ They return structured segments:
 
 Use `createSegmentGenerator(...)` for a default JSON-based helper, or provide your own implementation.
 
+The built-in generator uses this default prompt:
+
+```txt
+You compress conversation history into 1 or more replacement segments.
+Return strict JSON with this shape:
+{"segments":[{"fromId":"<id>","toId":"<id>","compressed":"<summary>"}]}
+
+Rules:
+- Use only transcript ids that appear in the transcript.
+- Cover the candidate range exactly with contiguous, non-overlapping segments.
+- Preserve concrete facts, decisions, unresolved work, and tool findings.
+- Do not include markdown fences or explanatory text.
+
+Target replacement budget: {{targetTokens}} tokens.
+Transcript ids run from {{firstId}} to {{lastId}}.
+
+Transcript:
+{{transcript}}
+```
+
+You can override it in two ways:
+- `promptTemplate`: tweak the default prompt with the same placeholders
+- `buildPrompt(input)`: replace the prompt entirely
+
+```ts
+const segmentGenerator = createSegmentGenerator({
+  promptTemplate: [
+    "Compress this transcript into exact replacement segments.",
+    "Return strict JSON: {\"segments\":[{\"fromId\":\"<id>\",\"toId\":\"<id>\",\"compressed\":\"<summary>\"}]}",
+    "Budget: {{targetTokens}}",
+    "Range: {{firstId}} -> {{lastId}}",
+    "",
+    "{{transcript}}",
+  ].join("\n"),
+  async generate(prompt) {
+    return await cheapModel(prompt);
+  },
+});
+```
+
 ## Segment Persistence
 
 The middleware does not keep hidden conversation state.
