@@ -19,6 +19,20 @@ describe("normalizeMessages", () => {
 });
 
 describe("messagesToContextMessages", () => {
+  test("accepts plain string user and assistant message content", () => {
+    const messages: ContextCompressionMessage[] = [
+      { id: "evt-user-1", role: "user", content: "hello" },
+      { id: "evt-assistant-1", role: "assistant", content: "hi" },
+    ];
+
+    const contextMessages = messagesToContextMessages(messages);
+
+    expect(contextMessages).toEqual([
+      { id: "evt-user-1", role: "user", content: "hello", entryType: "text", metadata: expect.any(Object) },
+      { id: "evt-assistant-1", role: "assistant", content: "hi", entryType: "text", metadata: expect.any(Object) },
+    ]);
+  });
+
   test("preserves stable message ids instead of deriving them from tool call ids", () => {
     const messages: ContextCompressionMessage[] = [
       {
@@ -48,6 +62,24 @@ describe("messagesToContextMessages", () => {
 });
 
 describe("contextMessagesToMessages", () => {
+  test("preserves plain string text messages when they are rewritten", () => {
+    const messages: ContextCompressionMessage[] = [
+      { id: "evt-user-1", role: "user", content: "hello" },
+    ];
+
+    const contextMessages = messagesToContextMessages(messages);
+    contextMessages[0] = {
+      ...contextMessages[0],
+      content: "rewritten",
+    };
+
+    const rebuiltMessages = contextMessagesToMessages(contextMessages);
+
+    expect(rebuiltMessages).toEqual([
+      { id: "evt-user-1", role: "user", content: "rewritten", providerOptions: undefined },
+    ]);
+  });
+
   test("rebuilds modified tool calls as AI SDK tool-call messages", () => {
     const messages: ContextCompressionMessage[] = [
       {

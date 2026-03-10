@@ -62,7 +62,7 @@ describe("contextCompression", () => {
     expect(generateCount).toBe(1);
     expect(store.get("conv-1")).toHaveLength(1);
     expect(firstResult.messages).toEqual([
-      { id: "segment:msg-1:msg-3", role: "user", content: [{ type: "text", text: "[Compressed history]\nstored summary" }] },
+      { id: "segment:msg-1:msg-3", role: "user", content: "[Compressed history]\nstored summary", providerOptions: undefined },
       makeMessages()[3],
     ]);
     expect(secondResult.messages).toEqual(firstResult.messages);
@@ -105,7 +105,7 @@ describe("contextCompression", () => {
     });
 
     expect(result.messages).toEqual([
-      { id: "segment:msg-1:msg-1", role: "user", content: [{ type: "text", text: "[Compressed history]\nsummary" }] },
+      { id: "segment:msg-1:msg-1", role: "user", content: "[Compressed history]\nsummary", providerOptions: undefined },
       messages[1],
       messages[2],
     ]);

@@ -1,11 +1,29 @@
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
 
 export type ContextRole = "system" | "user" | "assistant" | "tool";
 export type ContextEntryType = "text" | "tool-call" | "tool-result" | "summary";
 export type ToolEntryType = "tool-call" | "tool-result";
 export type ToolOutputPolicy = "keep" | "truncate" | "remove";
 
-export type ContextCompressionMessage = LanguageModelV3Message & { id: string };
+export type ContextCompressionMessage =
+  | {
+      id: string;
+      role: "system";
+      content: string;
+      providerOptions?: SharedV3ProviderOptions;
+    }
+  | {
+      id: string;
+      role: "user" | "assistant";
+      content: string | unknown[];
+      providerOptions?: SharedV3ProviderOptions;
+    }
+  | {
+      id: string;
+      role: "tool";
+      content: unknown[];
+      providerOptions?: SharedV3ProviderOptions;
+    };
 
 export interface ContextMessageInput {
   id?: string;

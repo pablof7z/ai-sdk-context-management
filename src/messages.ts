@@ -40,6 +40,26 @@ function extractTextParts(parts: Array<LanguageModelV3TextPart | { type: string;
   return JSON.stringify(parts);
 }
 
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return extractTextParts(content as Array<LanguageModelV3TextPart | { type: string; text?: string }>);
+  }
+
+  if (content === undefined) {
+    return "";
+  }
+
+  return JSON.stringify(content);
+}
+
+function isToolCallPart(part: unknown): part is LanguageModelV3ToolCallPart {
+  return typeof part === "object" && part !== null && (part as any).type === "tool-call";
+}
+
 function formatToolResultOutput(output: LanguageModelV3ToolResultOutput | unknown): string {
   if (typeof output === "string") {
     return output;
@@ -138,10 +158,10 @@ export function messagesToContextMessages(messages: ContextCompressionMessage[])
       return {
         id: message.id,
         role: "system",
-        content: message.content,
+        content: extractTextContent(message.content),
         metadata: {
           [ORIGINAL_MESSAGE_KEY]: message,
-          [ORIGINAL_CONTENT_KEY]: message.content,
+          [ORIGINAL_CONTENT_KEY]: extractTextContent(message.content),
         },
       };
     }
@@ -149,7 +169,9 @@ export function messagesToContextMessages(messages: ContextCompressionMessage[])
     const content = message.content;
 
     if (message.role === "tool") {
-      const result = extractToolResultText(content as any[]);
+      const result = Array.isArray(content)
+        ? extractToolResultText(content as any[])
+        : { content: extractTextContent(content) };
       return {
         id: message.id,
         role: "tool",
@@ -164,7 +186,7 @@ export function messagesToContextMessages(messages: ContextCompressionMessage[])
       };
     }
 
-    if (message.role === "assistant" && content.some((part) => part.type === "tool-call")) {
+    if (message.role === "assistant" && Array.isArray(content) && content.some(isToolCallPart)) {
       const result = extractToolCallText(content as any[]);
       return {
         id: message.id,
@@ -181,7 +203,7 @@ export function messagesToContextMessages(messages: ContextCompressionMessage[])
       };
     }
 
-    const extractedContent = extractTextParts(content as any[]);
+    const extractedContent = extractTextContent(content);
 
     return {
       id: message.id,
@@ -208,9 +230,20 @@ function createTextMessage(message: ContextMessage): ContextCompressionMessage {
     };
   }
 
+  const outputRole = message.role === "tool" ? "assistant" : message.role;
+
+  if (!originalMessage || typeof originalMessage.content === "string") {
+    return {
+      id: message.id,
+      role: outputRole,
+      providerOptions: originalMessage?.providerOptions,
+      content: message.content,
+    } as ContextCompressionMessage;
+  }
+
   return {
     id: message.id,
-    role: message.role === "tool" ? "assistant" : message.role,
+    role: outputRole,
     providerOptions: originalMessage?.providerOptions,
     content: [{ type: "text", text: message.content }],
   } as ContextCompressionMessage;
@@ -220,7 +253,9 @@ function createToolCallMessage(message: ContextMessage): ContextCompressionMessa
   const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
   const originalContent = message.metadata?.[ORIGINAL_CONTENT_KEY] as string | undefined;
   const originalPart = originalMessage?.role === "assistant"
-    ? originalMessage.content.find((part) => part.type === "tool-call")
+    ? Array.isArray(originalMessage.content)
+      ? originalMessage.content.find(isToolCallPart)
+      : undefined
     : undefined;
 
   const input = originalContent === message.content
