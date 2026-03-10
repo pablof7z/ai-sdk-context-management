@@ -1,49 +1,30 @@
 /**
- * Example 01: Basic Pass-Through
- * 
- * Demonstrates that the middleware does nothing when messages fit within
- * the context window. The message array passes through unchanged.
+ * Example 01: Basic pass-through through the AI SDK adapter.
  */
-import { contextManagement, createDefaultEstimator } from "ai-sdk-context-mgmt-middleware";
-import { generateConversation } from "./helpers.js";
+import { createContextManagementMiddleware } from "ai-sdk-context-mgmt-middleware";
+import { generateConversation, printPrompt, runMiddlewareTransform } from "./helpers.js";
 
 async function main() {
-  console.log("=== Example 01: Basic Pass-Through ===\n");
+  console.log("=== Example 01: Basic pass-through ===\n");
 
-  // Create middleware with a large token limit
-  const middleware = contextManagement({
+  const middleware = createContextManagementMiddleware({
     maxTokens: 128_000,
-    ruleBasedThreshold: 0.8,
+    compressionThreshold: 0.8,
     onDebug: (info) => {
-      console.log(`[debug] Tier: ${info.tier}, Tokens: ${info.originalTokenEstimate}, Messages: ${info.originalMessageCount}`);
-      console.log(`[debug] Modifications: ${info.modifications.length}`);
+      console.log(
+        `[debug] messages ${info.originalMessageCount} -> ${info.compressedMessageCount}, ` +
+        `tokens ${info.originalTokenEstimate} -> ${info.compressedTokenEstimate}, cacheHit=${info.cacheHit}`
+      );
     },
   });
 
-  // Generate a small conversation (well under limit)
-  const messages = generateConversation(5);
-  console.log(`Input: ${messages.length} messages`);
+  const prompt = generateConversation(3);
+  printPrompt("input", prompt);
 
-  // Simulate what wrapLanguageModel does: call transformParams
-  if (middleware.transformParams) {
-    const result = await middleware.transformParams({
-      type: "generate",
-      params: {
-        prompt: messages,
-        mode: { type: "regular" },
-        inputFormat: "messages",
-      },
-    } as any);
+  const output = await runMiddlewareTransform(middleware, prompt);
+  printPrompt("output", output);
 
-    const outputMessages = result.prompt;
-    console.log(`Output: ${outputMessages.length} messages`);
-    console.log(`\nResult: Messages passed through unchanged ✓`);
-    
-    // Verify they're the same count
-    if (outputMessages.length === messages.length) {
-      console.log("No compression was needed - context window has plenty of room.");
-    }
-  }
+  console.log(`\nunchanged: ${JSON.stringify(output) === JSON.stringify(prompt)}`);
 }
 
 main().catch(console.error);

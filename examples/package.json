@@ -3,8 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "ai": "^4.0.0",
-    "@ai-sdk/openai": "^1.0.0",
     "ai-sdk-context-mgmt-middleware": "file:.."
   },
   "devDependencies": {

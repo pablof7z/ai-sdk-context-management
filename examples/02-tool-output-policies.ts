@@ -1,91 +1,70 @@
 /**
- * Example 02: Tool Output Policies
- * 
- * Shows per-tool output policies (keep, truncate, remove) and the
- * onToolOutputTruncated hook for external storage integration.
+ * Example 02: Always-on tool output policy.
+ *
+ * Demonstrates that tool-result truncation/removal runs even when the
+ * conversation is still below the segment-compression threshold.
  */
-import { contextManagement } from "ai-sdk-context-mgmt-middleware";
-import { generateConversation, generateToolExchange, generatePadding } from "./helpers.js";
+import { createContextManagementMiddleware } from "ai-sdk-context-mgmt-middleware";
+import { generateConversation, generateToolExchange, getTextContent, printPrompt, runMiddlewareTransform } from "./helpers.js";
 
 async function main() {
-  console.log("=== Example 02: Tool Output Policies ===\n");
+  console.log("=== Example 02: Tool output policies ===\n");
 
-  const truncatedOutputs: Array<{ toolName: string; size: number; removed: boolean }> = [];
+  const truncatedOutputs: Array<{ toolName: string; removed: boolean; originalTokens: number }> = [];
 
-  const middleware = contextManagement({
-    // Intentionally low to trigger compression
-    maxTokens: 4_000,
-    ruleBasedThreshold: 0.7,
-    protectedTailCount: 2,
-
+  const middleware = createContextManagementMiddleware({
+    maxTokens: 20_000,
+    compressionThreshold: 0.95,
     toolOutput: {
       defaultPolicy: "truncate",
-      maxTokens: 50,
+      maxTokens: 40,
+      recentFullCount: 0,
       toolOverrides: {
-        search_results: "truncate",
         debug_logs: "remove",
         important_data: "keep",
       },
     },
-
-    // Hook: track what gets truncated
     onToolOutputTruncated: async (event) => {
       truncatedOutputs.push({
         toolName: event.toolName,
-        size: event.originalTokens,
         removed: event.removed,
+        originalTokens: event.originalTokens,
       });
-      console.log(
-        `  [hook] ${event.removed ? "REMOVED" : "TRUNCATED"}: ${event.toolName} ` +
-        `(${event.originalTokens} tokens)`
-      );
 
-      // Optionally return replacement text
       if (event.removed) {
-        return `[Output was ${event.originalTokens} tokens. Use retrieve_tool_output("${event.toolCallId}") to fetch.]`;
+        return `[Output stored externally for ${event.toolName}:${event.toolCallId}]`;
       }
-      // Return undefined to keep default truncation
+
       return undefined;
     },
-
     onDebug: (info) => {
-      const saved = info.originalTokenEstimate - info.compressedTokenEstimate;
-      console.log(`\n[debug] Tier: ${info.tier}`);
-      console.log(`[debug] Tokens: ${info.originalTokenEstimate} → ${info.compressedTokenEstimate} (saved ${saved})`);
-      for (const mod of info.modifications) {
-        console.log(`[debug]   ${mod.type}: ${mod.toolName || "message"} at index ${mod.messageIndex}`);
-      }
+      console.log(
+        `[debug] tokens ${info.originalTokenEstimate} -> ${info.compressedTokenEstimate}, ` +
+        `modifications=${info.modifications.length}`
+      );
     },
   });
 
-  // Build a conversation with various tool outputs
-  const messages = [
-    ...generateConversation(3),
-    ...generateToolExchange("search_results", 500),
+  const prompt = [
     ...generateConversation(2),
-    ...generateToolExchange("debug_logs", 300),
-    ...generateConversation(1),
-    ...generateToolExchange("important_data", 200),
+    ...generateToolExchange("search_results", 250),
+    ...generateToolExchange("debug_logs", 180),
+    ...generateToolExchange("important_data", 120),
     ...generateConversation(1),
   ];
 
-  console.log(`Input: ${messages.length} messages\n`);
+  printPrompt("input", prompt);
+  const output = await runMiddlewareTransform(middleware, prompt);
+  printPrompt("output", output);
 
-  if (middleware.transformParams) {
-    const result = await middleware.transformParams({
-      type: "generate",
-      params: {
-        prompt: messages,
-        mode: { type: "regular" },
-        inputFormat: "messages",
-      },
-    } as any);
+  console.log("\ntruncation events:");
+  for (const event of truncatedOutputs) {
+    console.log(`  ${event.toolName}: ${event.removed ? "removed" : "truncated"} (${event.originalTokens} tokens)`);
+  }
 
-    console.log(`\nOutput: ${result.prompt.length} messages`);
-    console.log(`\nTruncation events: ${truncatedOutputs.length}`);
-    for (const t of truncatedOutputs) {
-      console.log(`  - ${t.toolName}: ${t.removed ? "removed" : "truncated"} (was ${t.size} tokens)`);
-    }
+  console.log("\nfinal tool outputs:");
+  for (const message of output.filter((message) => message.role === "tool")) {
+    console.log(`  ${getTextContent(message).slice(0, 120)}${getTextContent(message).length > 120 ? "..." : ""}`);
   }
 }
 

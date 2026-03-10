@@ -1,137 +1,108 @@
 /**
- * Example 04: Full Pipeline with Caching
- * 
- * Complete production-like setup with all features:
- * - Tool output policies with per-tool configuration
- * - LLM-assisted compression (tier 2)
- * - Compression caching
- * - Debug output
- * - Truncation hook for external storage
- * 
- * Requires: OPENAI_API_KEY environment variable (or runs with mock)
+ * Example 04: Full pipeline with cache + segment store + generator helper.
  */
 import {
-  contextManagement,
-  createLLMCompressor,
   createCompressionCache,
+  createContextManagementMiddleware,
+  createSegmentGenerator,
 } from "ai-sdk-context-mgmt-middleware";
-import { generateConversation, generateToolExchange } from "./helpers.js";
+import { generateConversation, generateToolExchange, printPrompt, runMiddlewareTransform } from "./helpers.js";
 
 async function main() {
-  console.log("=== Example 04: Full Pipeline with Caching ===\n");
+  console.log("=== Example 04: Full pipeline ===\n");
 
-  // Simulate external storage
   const externalStore = new Map<string, string>();
+  const segmentStore = new Map<string, any[]>();
+  const cache = createCompressionCache<any>(20);
+  let llmCalls = 0;
 
-  // Set up caching
-  const cache = createCompressionCache(50);
-
-  // Mock LLM compressor (replace with real one using OPENAI_API_KEY)
-  const llmCompressor = {
-    compress: async (messages: any[], targetTokens: number) => {
-      console.log(`  [LLM] Summarizing ${messages.length} messages into ~${targetTokens} tokens...`);
-      return [{
-        role: "assistant" as const,
-        content: `[Summary: ${messages.length} earlier messages covered project setup, debugging, and feature planning.]`,
-      }];
-    },
-  };
-
-  const middleware = contextManagement({
-    maxTokens: 3_000,
-    ruleBasedThreshold: 0.7,
-    llmThreshold: 0.85,
-    protectedTailCount: 4,
-
-    toolOutputPolicy: {
-      defaultPolicy: "truncate",
-      maxOutputTokens: 100,
-      perTool: {
-        file_read: { policy: "truncate", maxTokens: 200 },
-        search: { policy: "truncate", maxTokens: 50 },
-        logs: { policy: "remove" },
-        calculate: { policy: "keep" },
+  const middleware = createContextManagementMiddleware({
+    maxTokens: 520,
+    compressionThreshold: 0.65,
+    protectedTailCount: 3,
+    cache,
+    segmentStore: {
+      load: (conversationKey) => segmentStore.get(conversationKey) ?? [],
+      append: (conversationKey, segments) => {
+        segmentStore.set(conversationKey, [...(segmentStore.get(conversationKey) ?? []), ...segments]);
       },
     },
-
-    llmCompressor,
-    cache,
-
-    onToolOutputTruncated: async (event) => {
-      // Store original output
-      const id = `stored_${Date.now()}_${event.toolName}`;
-      externalStore.set(id, event.originalOutput);
-      console.log(`  [store] Saved ${event.toolName} output as ${id} (${event.originalTokens} tokens)`);
-
-      if (event.removed) {
-        return `[Output stored externally. ID: ${id}]`;
-      }
-      return undefined; // Use default truncation
+    resolveConversationKey({ params }) {
+      return (params.providerOptions as any).contextManagement.conversationId;
     },
-
-    onDebug: (info) => {
-      const saved = info.originalTokenEstimate - info.compressedTokenEstimate;
-      console.log(`\n[debug] === Compression Report ===`);
-      console.log(`[debug] Tier: ${info.tier}`);
-      console.log(`[debug] Tokens: ${info.originalTokenEstimate} → ${info.compressedTokenEstimate}`);
-      console.log(`[debug] Saved: ${saved} tokens`);
-      console.log(`[debug] Cached: ${info.cacheHit}`);
-      console.log(`[debug] Modifications:`);
-      for (const mod of info.modifications) {
-        console.log(
-          `[debug]   ${mod.type}: ${mod.toolName || "message"} ` +
-          `(${mod.originalTokens} → ${mod.compressedTokens} tokens)`
-        );
+    toolOutput: {
+      defaultPolicy: "truncate",
+      maxTokens: 30,
+      recentFullCount: 1,
+      toolOverrides: {
+        logs: "remove",
+        important_data: "keep",
+      },
+    },
+    onToolOutputTruncated: async (event) => {
+      const storageId = `store_${event.toolName}_${event.toolCallId}`;
+      externalStore.set(storageId, event.originalOutput);
+      if (event.removed) {
+        return `[Tool output removed. Retrieve with externalStore.get("${storageId}")]`;
       }
+      return undefined;
+    },
+    segmentGenerator: createSegmentGenerator({
+      async generate(prompt) {
+        llmCalls++;
+        const transcriptRangeMatch = prompt.match(/Transcript ids run from (\S+) to (\S+)\./m);
+        const firstId = transcriptRangeMatch?.[1] ?? "unknown";
+        const lastId = transcriptRangeMatch?.[2] ?? firstId;
+        return JSON.stringify({
+          segments: [{
+            fromId: firstId,
+            toId: lastId,
+            compressed: "Compressed project history with tool findings and pending work.",
+          }],
+        });
+      },
+    }),
+    onDebug: (info) => {
+      console.log(
+        `[debug] cacheHit=${info.cacheHit}, modifications=${info.modifications.length}, ` +
+        `newSegments=${info.newSegments.length}, tokens ${info.originalTokenEstimate} -> ${info.compressedTokenEstimate}`
+      );
     },
   });
 
-  // Build a realistic conversation
-  const messages = [
-    ...generateConversation(5),
-    ...generateToolExchange("file_read", 400),
-    ...generateConversation(3),
-    ...generateToolExchange("search", 300),
-    ...generateToolExchange("logs", 500),
+  const prompt = [
     ...generateConversation(4),
-    ...generateToolExchange("calculate", 50),
+    ...generateToolExchange("fs_read", 180),
+    ...generateConversation(2),
+    ...generateToolExchange("logs", 220),
+    ...generateToolExchange("important_data", 90),
     ...generateConversation(2),
   ];
+  const providerOptions = { contextManagement: { conversationId: "conv-full-pipeline" } };
 
-  console.log(`Input: ${messages.length} messages`);
+  console.log("-- first call --");
+  const firstOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
+  printPrompt("first output", firstOutput);
+  console.log(`segment store size: ${segmentStore.get("conv-full-pipeline")?.length ?? 0}`);
+  console.log(`cache size: ${cache.size}`);
+  console.log(`external store size: ${externalStore.size}`);
+  console.log(`generator calls: ${llmCalls}`);
 
-  if (middleware.transformParams) {
-    // First call - no cache
-    console.log("\n--- First call (no cache) ---");
-    const result1 = await middleware.transformParams({
-      type: "generate",
-      params: {
-        prompt: messages,
-        mode: { type: "regular" },
-        inputFormat: "messages",
-      },
-    } as any);
-    console.log(`\nOutput: ${result1.prompt.length} messages`);
+  console.log("\n-- second call (segment reuse expected) --");
+  const secondOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
+  printPrompt("second output", secondOutput);
+  console.log(`segment store size: ${segmentStore.get("conv-full-pipeline")?.length ?? 0}`);
+  console.log(`cache size: ${cache.size}`);
+  console.log(`external store size: ${externalStore.size}`);
+  console.log(`generator calls: ${llmCalls}`);
 
-    // Second call with same messages - should hit cache
-    console.log("\n--- Second call (cache hit expected) ---");
-    const result2 = await middleware.transformParams({
-      type: "generate",
-      params: {
-        prompt: messages,
-        mode: { type: "regular" },
-        inputFormat: "messages",
-      },
-    } as any);
-    console.log(`\nOutput: ${result2.prompt.length} messages`);
-
-    // Show external store contents
-    console.log(`\n--- External Store ---`);
-    console.log(`Stored ${externalStore.size} tool outputs:`);
-    for (const [id, content] of externalStore) {
-      console.log(`  ${id}: ${content.length} chars`);
-    }
-  }
+  console.log("\n-- third call (cache hit expected) --");
+  const thirdOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
+  printPrompt("third output", thirdOutput);
+  console.log(`segment store size: ${segmentStore.get("conv-full-pipeline")?.length ?? 0}`);
+  console.log(`cache size: ${cache.size}`);
+  console.log(`external store size: ${externalStore.size}`);
+  console.log(`generator calls: ${llmCalls}`);
 }
 
 main().catch(console.error);
