@@ -34,6 +34,61 @@ function sortToolOverrides(toolOverrides: Record<string, string>): Record<string
   );
 }
 
+function extractToolCallIds(message: LanguageModelV3Message): string[] {
+  if (message.role !== "assistant") return [];
+
+  const content = (message as any).content;
+  if (!Array.isArray(content)) return [];
+
+  return content
+    .filter((part: any) => part.type === "tool-call" && typeof part.toolCallId === "string")
+    .map((part: any) => part.toolCallId);
+}
+
+function extractToolResultIds(message: LanguageModelV3Message): string[] {
+  if (message.role !== "tool") return [];
+
+  const content = (message as any).content;
+  if (!Array.isArray(content)) return [];
+
+  return content
+    .filter((part: any) => part.type === "tool-result" && typeof part.toolCallId === "string")
+    .map((part: any) => part.toolCallId);
+}
+
+function adjustTailSplitForToolAdjacency(
+  messages: LanguageModelV3Message[],
+  requestedTailCount: number
+): number {
+  let splitIndex = Math.max(messages.length - requestedTailCount, 0);
+
+  while (splitIndex > 0) {
+    const toolCallsInTail = new Set<string>();
+    const toolResultsInTail = new Set<string>();
+
+    for (let i = splitIndex; i < messages.length; i++) {
+      for (const toolCallId of extractToolCallIds(messages[i])) {
+        toolCallsInTail.add(toolCallId);
+      }
+      for (const toolCallId of extractToolResultIds(messages[i])) {
+        toolResultsInTail.add(toolCallId);
+      }
+    }
+
+    const hasDanglingToolResult = Array.from(toolResultsInTail).some(
+      (toolCallId) => !toolCallsInTail.has(toolCallId)
+    );
+
+    if (!hasDanglingToolResult) {
+      break;
+    }
+
+    splitIndex--;
+  }
+
+  return splitIndex;
+}
+
 /**
  * Create the context management middleware.
  *
@@ -146,8 +201,9 @@ export function contextManagement(config: ContextManagementConfig): LanguageMode
 
       // Split protected tail from compressible body
       const tailCount = Math.min(protectedTailCount, conversationMessages.length);
-      const compressibleBody = conversationMessages.slice(0, conversationMessages.length - tailCount);
-      const protectedTail = conversationMessages.slice(conversationMessages.length - tailCount);
+      const tailStartIndex = adjustTailSplitForToolAdjacency(conversationMessages, tailCount);
+      const compressibleBody = conversationMessages.slice(0, tailStartIndex);
+      const protectedTail = conversationMessages.slice(tailStartIndex);
 
       let compressed = compressibleBody;
       let tier: CompressionTier = "none";

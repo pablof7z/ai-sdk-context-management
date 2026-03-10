@@ -70,4 +70,47 @@ describe("contextManagement", () => {
     expect(strictResult?.prompt).not.toEqual(PROMPT);
     expect(relaxedResult?.prompt).toEqual(PROMPT);
   });
+
+  test("keeps tool-call and tool-result together when protecting the tail", async () => {
+    const middleware = contextManagement({
+      maxTokens: 20,
+      ruleBasedThreshold: 0,
+      llmThreshold: 0,
+      protectedTailCount: 1,
+      llmCompressor: {
+        async compress() {
+          return [{ role: "user", content: [{ type: "text", text: "summary" }] } as any];
+        },
+      },
+    });
+
+    const prompt: LanguageModelV3Message[] = [
+      { role: "user", content: [{ type: "text", text: "question" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "c1", toolName: "search", args: { q: "x" } }],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "search",
+          content: [{ type: "text", text: "tool output " + "x".repeat(200) }],
+        }],
+      } as any,
+    ];
+
+    const result = await middleware.transformParams?.({
+      params: { prompt } as any,
+      type: "generate-text" as any,
+      model: { provider: "test", modelId: "shared" } as any,
+    });
+
+    expect(result?.prompt).toEqual([
+      { role: "user", content: [{ type: "text", text: "summary" }] },
+      prompt[1],
+      prompt[2],
+    ]);
+  });
 });
