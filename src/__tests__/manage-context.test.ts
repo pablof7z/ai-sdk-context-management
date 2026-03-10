@@ -1,20 +1,21 @@
 import { describe, test, expect } from "bun:test";
 import { manageContext } from "../manage-context.js";
-import type { ContextMessageInput, SegmentGenerator } from "../types.js";
+import type { ContextMessage, SegmentGenerator } from "../types.js";
 
-function makeConversation(): ContextMessageInput[] {
+function makeConversation(): ContextMessage[] {
   return [
-    { role: "user", content: "Plan the migration" },
-    { role: "assistant", content: "Collecting the current state" },
-    { role: "user", content: "Focus on compression and persistence" },
-    { role: "assistant", content: "I will keep the latest turn intact" },
+    { id: "msg-1", role: "user", entryType: "text", content: "Plan the migration" },
+    { id: "msg-2", role: "assistant", entryType: "text", content: "Collecting the current state" },
+    { id: "msg-3", role: "user", entryType: "text", content: "Focus on compression and persistence" },
+    { id: "msg-4", role: "assistant", entryType: "text", content: "I will keep the latest turn intact" },
   ];
 }
 
 describe("manageContext", () => {
   test("applies custom tool policy even below the segment-compression threshold", async () => {
-    const messages: ContextMessageInput[] = [
+    const messages: ContextMessage[] = [
       {
+        id: "msg-tool-call",
         role: "assistant",
         entryType: "tool-call",
         toolCallId: "call-1",
@@ -22,13 +23,14 @@ describe("manageContext", () => {
         content: `fs_write(${JSON.stringify({ path: "/tmp/file", content: "x".repeat(400) })})`,
       },
       {
+        id: "msg-tool-result",
         role: "tool",
         entryType: "tool-result",
         toolCallId: "call-1",
         toolName: "fs_write",
         content: "ok",
       },
-      { role: "user", content: "Continue" },
+      { id: "msg-user", role: "user", entryType: "text", content: "Continue" },
     ];
 
     const result = await manageContext({
@@ -119,9 +121,9 @@ describe("manageContext", () => {
   test("enforces a hard token budget after all transforms", async () => {
     const result = await manageContext({
       messages: [
-        { role: "user", content: "x".repeat(200) },
-        { role: "assistant", content: "y".repeat(200) },
-        { role: "user", content: "z".repeat(200) },
+        { id: "msg-1", role: "user", entryType: "text", content: "x".repeat(200) },
+        { id: "msg-2", role: "assistant", entryType: "text", content: "y".repeat(200) },
+        { id: "msg-3", role: "user", entryType: "text", content: "z".repeat(200) },
       ],
       maxTokens: 20,
       compressionThreshold: 1,

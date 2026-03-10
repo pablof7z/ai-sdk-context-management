@@ -1,9 +1,9 @@
 {
-  "name": "ai-sdk-context-mgmt-examples",
+  "name": "ai-sdk-context-management-examples",
   "private": true,
   "type": "module",
   "dependencies": {
-    "ai-sdk-context-mgmt-middleware": "file:.."
+    "ai-sdk-context-management": "file:.."
   },
   "devDependencies": {
     "tsx": "^4.0.0",

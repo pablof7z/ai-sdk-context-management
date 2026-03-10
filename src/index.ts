@@ -1,5 +1,4 @@
-export { manageContext } from "./manage-context.js";
-export { createContextManagementMiddleware, contextManagement } from "./middleware.js";
+export { contextCompression } from "./context-compression.js";
 export { createTranscript, defaultTranscriptRenderer } from "./transcript.js";
 export { applySegments, validateSegments, buildSummaryMessage } from "./segments.js";
 export {
@@ -7,8 +6,7 @@ export {
   createSegmentGenerator,
   DEFAULT_SEGMENT_PROMPT_TEMPLATE,
 } from "./segment-generator.js";
-export { applyToolPolicy, applyToolOutputPolicy, defaultToolPolicy } from "./rule-based-compressor.js";
-export { normalizeMessages, promptToContextMessages, contextMessagesToPrompt } from "./messages.js";
+export { defaultToolPolicy } from "./rule-based-compressor.js";
 export { createDefaultEstimator } from "./token-estimator.js";
 export { createCompressionCache, hashMessages, hashValue } from "./cache.js";
 
@@ -16,23 +14,19 @@ export type {
   CompressionCache,
   CompressionModification,
   CompressionSegment,
-  ContextDebugInfo,
+  ContextCompressionConfig,
+  ContextCompressionDebugInfo,
+  ContextCompressionMessage,
+  ContextCompressionResult,
+  ContextCompressionStats,
   ContextEntryType,
-  ContextManagementConfig,
-  ContextManagementMiddleware,
   ContextMessage,
-  ContextMessageInput,
   ContextRole,
-  ManageContextConfig,
-  ManageContextResult,
-  ManageContextStats,
-  MiddlewareContext,
   SegmentGenerationInput,
   SegmentGenerator,
   SegmentStore,
   SegmentValidationOptions,
   TokenEstimator,
-  ToolContentTruncationEvent,
   ToolEntryPolicyDecision,
   ToolEntryType,
   ToolOutputPolicy,

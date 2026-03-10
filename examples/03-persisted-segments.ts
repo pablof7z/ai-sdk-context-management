@@ -1,63 +1,90 @@
 /**
- * Example 03: Persisted segments through a SegmentStore.
+ * Example 03: Reusing persisted segments.
  *
- * The first call generates a segment and saves it. The second call reuses the
- * stored segment instead of regenerating it.
+ * The first run generates a segment. The second run loads it and skips regeneration.
  */
-import { createContextManagementMiddleware } from "ai-sdk-context-mgmt-middleware";
-import { generateConversation, printPrompt, runMiddlewareTransform } from "./helpers.js";
+import type { CompressionSegment } from "ai-sdk-context-management";
+import {
+  makeConversationTurns,
+  printMessages,
+  resetIds,
+  runContextCompression,
+} from "./helpers.js";
 
 async function main() {
   console.log("=== Example 03: Persisted segments ===\n");
 
-  const segmentStore = new Map<string, any[]>();
-  let generationCount = 0;
+  resetIds();
+  const conversationKey = "incident-review-42";
+  const segmentStore = new Map<string, CompressionSegment[]>();
+  let generatorCalls = 0;
 
-  const middleware = createContextManagementMiddleware({
-    maxTokens: 420,
+  const messages = makeConversationTurns([
+    {
+      user: "Capture the timeline from the outage review.",
+      assistant: "The first customer impact happened at 09:12 UTC after deploy 143.",
+    },
+    {
+      user: "What was the first mitigation?",
+      assistant: "We rolled traffic back to the previous Redis client at 09:21 UTC.",
+    },
+    {
+      user: "What still needs follow-up?",
+      assistant: "We still need a regression test for stale reads after reconnect.",
+    },
+    {
+      user: "Include the customer-facing impact.",
+      assistant: "About 7% of requests returned 502s for nine minutes.",
+    },
+  ], "You write short incident summaries.");
+
+  console.log("-- first call: no stored segments yet --");
+  const firstResult = await runContextCompression({
+    messages,
+    maxTokens: 180,
     compressionThreshold: 0.6,
     protectedTailCount: 2,
+    conversationKey,
     segmentStore: {
-      load: (conversationKey) => segmentStore.get(conversationKey) ?? [],
-      save: (conversationKey, segments) => {
-        segmentStore.set(conversationKey, segments);
+      load: (key) => segmentStore.get(key) ?? [],
+      save: (key, segments) => {
+        segmentStore.set(key, segments);
       },
-    },
-    resolveConversationKey({ params }) {
-      return (params.providerOptions as any).contextManagement.conversationId;
     },
     segmentGenerator: {
       async generate({ messages }) {
-        generationCount++;
+        generatorCalls++;
         return [{
           fromId: messages[0].id,
           toId: messages[messages.length - 1].id,
-          compressed: `Summary generated from ${messages.length} messages`,
+          compressed: "Timeline: deploy 143 caused 502s, rollback fixed impact, stale-read regression test still pending.",
         }];
       },
     },
-    onDebug: (info) => {
-      console.log(
-        `[debug] newSegments=${info.newSegments.length}, appliedSegments=${info.appliedSegments.length}, ` +
-        `tokens ${info.originalTokenEstimate} -> ${info.compressedTokenEstimate}`
-      );
+  });
+
+  printMessages("first output", firstResult.messages);
+  console.log(`stored segments: ${segmentStore.get(conversationKey)?.length ?? 0}`);
+  console.log(`generator calls: ${generatorCalls}`);
+
+  console.log("\n-- second call: stored segment is reused --");
+  const secondResult = await runContextCompression({
+    messages,
+    maxTokens: 180,
+    compressionThreshold: 0.6,
+    protectedTailCount: 2,
+    conversationKey,
+    segmentStore: {
+      load: (key) => segmentStore.get(key) ?? [],
+      save: (key, segments) => {
+        segmentStore.set(key, segments);
+      },
     },
   });
 
-  const prompt = generateConversation(6);
-  const providerOptions = { contextManagement: { conversationId: "conv-123" } };
-
-  console.log("-- first turn --");
-  const firstOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
-  printPrompt("first output", firstOutput);
-  console.log(`stored segments: ${segmentStore.get("conv-123")?.length ?? 0}`);
-  console.log(`generation count: ${generationCount}`);
-
-  console.log("\n-- second turn with same history --");
-  const secondOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
-  printPrompt("second output", secondOutput);
-  console.log(`stored segments: ${segmentStore.get("conv-123")?.length ?? 0}`);
-  console.log(`generation count: ${generationCount}`);
+  printMessages("second output", secondResult.messages);
+  console.log(`stored segments: ${segmentStore.get(conversationKey)?.length ?? 0}`);
+  console.log(`generator calls: ${generatorCalls}`);
 }
 
 main().catch(console.error);

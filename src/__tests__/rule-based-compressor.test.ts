@@ -9,6 +9,7 @@ const estimator = createDefaultEstimator();
 function makeMessages(): ContextMessageInput[] {
   return [
     {
+      id: "msg-1",
       role: "assistant",
       entryType: "tool-call",
       toolCallId: "c1",
@@ -16,6 +17,7 @@ function makeMessages(): ContextMessageInput[] {
       content: `fs_write(${JSON.stringify({ path: "/tmp/output.txt", content: "x".repeat(800) })})`,
     },
     {
+      id: "msg-2",
       role: "tool",
       entryType: "tool-result",
       toolCallId: "c1",
@@ -23,6 +25,7 @@ function makeMessages(): ContextMessageInput[] {
       content: "ok",
     },
     {
+      id: "msg-3",
       role: "assistant",
       entryType: "tool-call",
       toolCallId: "c2",
@@ -30,6 +33,7 @@ function makeMessages(): ContextMessageInput[] {
       content: 'fs_read({"path":"/tmp/output.txt"})',
     },
     {
+      id: "msg-4",
       role: "tool",
       entryType: "tool-result",
       toolCallId: "c2",
@@ -43,8 +47,8 @@ describe("applyToolPolicy", () => {
   test("passes through messages without tool entries", async () => {
     const result = await applyToolPolicy(
       normalizeMessages([
-        { role: "user", content: "Hello" },
-        { role: "assistant", content: "Hi" },
+        { id: "msg-user", role: "user", content: "Hello" },
+        { id: "msg-assistant", role: "assistant", content: "Hi" },
       ]),
       {
         estimator,
@@ -81,6 +85,7 @@ describe("applyToolPolicy", () => {
     const messages = normalizeMessages([
       ...makeMessages(),
       {
+        id: "msg-5",
         role: "assistant",
         entryType: "tool-call",
         toolCallId: "c3",
@@ -88,6 +93,7 @@ describe("applyToolPolicy", () => {
         content: 'search({"q":"recent"})',
       },
       {
+        id: "msg-6",
         role: "tool",
         entryType: "tool-result",
         toolCallId: "c3",

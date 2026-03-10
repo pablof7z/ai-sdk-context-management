@@ -1,27 +1,19 @@
 import type {
-  LanguageModelV3Message,
   LanguageModelV3TextPart,
   LanguageModelV3ToolCallPart,
   LanguageModelV3ToolResultOutput,
   LanguageModelV3ToolResultPart,
 } from "@ai-sdk/provider";
-import type { ContextEntryType, ContextMessage, ContextMessageInput } from "./types.js";
-import { hashValue } from "./cache.js";
+import type {
+  ContextCompressionMessage,
+  ContextEntryType,
+  ContextMessage,
+  ContextMessageInput,
+} from "./types.js";
 
-const SHORT_ID_LENGTH = 8;
 const ORIGINAL_MESSAGE_KEY = "__originalMessage";
 const ORIGINAL_CONTENT_KEY = "__originalContent";
 const ORIGINAL_TOOL_CALL_INPUT_KEY = "__originalToolCallInput";
-
-function shortHash(value: string): string {
-  return hashValue(value).slice(0, SHORT_ID_LENGTH) || "msg";
-}
-
-function uniqueId(baseId: string, counts: Map<string, number>): string {
-  const next = (counts.get(baseId) ?? 0) + 1;
-  counts.set(baseId, next);
-  return next === 1 ? baseId : `${baseId}-${next}`;
-}
 
 function inferEntryType(message: ContextMessageInput): ContextEntryType {
   if (message.entryType) return message.entryType;
@@ -30,16 +22,10 @@ function inferEntryType(message: ContextMessageInput): ContextEntryType {
   return "text";
 }
 
-function buildBaseId(message: ContextMessageInput, entryType: ContextEntryType): string {
-  if (entryType === "tool-call" && message.toolCallId) {
-    return `${message.toolCallId}:call`;
+function assertMessageId(id: unknown, index: number): asserts id is string {
+  if (typeof id !== "string" || id.length === 0) {
+    throw new Error(`messages[${index}].id must be a non-empty string`);
   }
-
-  if (entryType === "tool-result" && message.toolCallId) {
-    return `${message.toolCallId}:result`;
-  }
-
-  return message.id ?? shortHash(`${message.role}:${message.content}`);
 }
 
 function extractTextParts(parts: Array<LanguageModelV3TextPart | { type: string; text?: string }>): string {
@@ -126,24 +112,31 @@ function extractToolResultText(content: any[]): { content: string; toolCallId?: 
 }
 
 export function normalizeMessages(messages: ContextMessageInput[]): ContextMessage[] {
-  const idCounts = new Map<string, number>();
+  const seenIds = new Set<string>();
 
-  return messages.map((message) => {
+  return messages.map((message, index) => {
+    assertMessageId(message.id, index);
+
+    if (seenIds.has(message.id)) {
+      throw new Error(`Duplicate message id "${message.id}" at messages[${index}]`);
+    }
+
+    seenIds.add(message.id);
     const entryType = inferEntryType(message);
-    const id = uniqueId(buildBaseId(message, entryType), idCounts);
 
     return {
       ...message,
-      id,
+      id: message.id,
       entryType,
     };
   });
 }
 
-export function promptToContextMessages(prompt: LanguageModelV3Message[]): ContextMessage[] {
-  const messages: ContextMessageInput[] = prompt.map((message) => {
+export function messagesToContextMessages(messages: ContextCompressionMessage[]): ContextMessage[] {
+  return normalizeMessages(messages.map((message) => {
     if (message.role === "system") {
       return {
+        id: message.id,
         role: "system",
         content: message.content,
         metadata: {
@@ -158,6 +151,7 @@ export function promptToContextMessages(prompt: LanguageModelV3Message[]): Conte
     if (message.role === "tool") {
       const result = extractToolResultText(content as any[]);
       return {
+        id: message.id,
         role: "tool",
         content: result.content,
         entryType: "tool-result",
@@ -173,6 +167,7 @@ export function promptToContextMessages(prompt: LanguageModelV3Message[]): Conte
     if (message.role === "assistant" && content.some((part) => part.type === "tool-call")) {
       const result = extractToolCallText(content as any[]);
       return {
+        id: message.id,
         role: "assistant",
         content: result.content,
         entryType: "tool-call",
@@ -189,6 +184,7 @@ export function promptToContextMessages(prompt: LanguageModelV3Message[]): Conte
     const extractedContent = extractTextParts(content as any[]);
 
     return {
+      id: message.id,
       role: message.role,
       content: extractedContent,
       entryType: "text",
@@ -197,37 +193,42 @@ export function promptToContextMessages(prompt: LanguageModelV3Message[]): Conte
         [ORIGINAL_CONTENT_KEY]: extractedContent,
       },
     } as ContextMessageInput;
-  });
-
-  return normalizeMessages(messages);
+  }));
 }
 
-function createTextPromptMessage(message: ContextMessage): LanguageModelV3Message {
+function createTextMessage(message: ContextMessage): ContextCompressionMessage {
+  const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
+
   if (message.role === "system") {
     return {
+      id: message.id,
       role: "system",
       content: message.content,
+      providerOptions: originalMessage?.providerOptions,
     };
   }
 
   return {
+    id: message.id,
     role: message.role === "tool" ? "assistant" : message.role,
+    providerOptions: originalMessage?.providerOptions,
     content: [{ type: "text", text: message.content }],
-  } as LanguageModelV3Message;
+  } as ContextCompressionMessage;
 }
 
-function createToolCallPromptMessage(message: ContextMessage): LanguageModelV3Message {
-  const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as LanguageModelV3Message | undefined;
+function createToolCallMessage(message: ContextMessage): ContextCompressionMessage {
+  const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
   const originalContent = message.metadata?.[ORIGINAL_CONTENT_KEY] as string | undefined;
   const originalPart = originalMessage?.role === "assistant"
     ? originalMessage.content.find((part) => part.type === "tool-call")
     : undefined;
 
   const input = originalContent === message.content
-    ? message.metadata?.[ORIGINAL_TOOL_CALL_INPUT_KEY] ?? { _contextManagementInput: message.content }
-    : { _contextManagementInput: message.content };
+    ? message.metadata?.[ORIGINAL_TOOL_CALL_INPUT_KEY] ?? { _contextCompressionInput: message.content }
+    : { _contextCompressionInput: message.content };
 
   return {
+    id: message.id,
     role: "assistant",
     providerOptions: originalMessage?.providerOptions,
     content: [{
@@ -238,14 +239,15 @@ function createToolCallPromptMessage(message: ContextMessage): LanguageModelV3Me
       providerExecuted: (originalPart as any)?.providerExecuted,
       providerOptions: (originalPart as any)?.providerOptions,
     }],
-  } as LanguageModelV3Message;
+  } as ContextCompressionMessage;
 }
 
-function createToolResultPromptMessage(message: ContextMessage): LanguageModelV3Message {
-  const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as LanguageModelV3Message | undefined;
+function createToolResultMessage(message: ContextMessage): ContextCompressionMessage {
+  const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
   const originalPart = originalMessage?.role === "tool" ? originalMessage.content[0] : undefined;
 
   return {
+    id: message.id,
     role: "tool",
     providerOptions: originalMessage?.providerOptions,
     content: [{
@@ -258,9 +260,9 @@ function createToolResultPromptMessage(message: ContextMessage): LanguageModelV3
   };
 }
 
-export function contextMessagesToPrompt(messages: ContextMessage[]): LanguageModelV3Message[] {
+export function contextMessagesToMessages(messages: ContextMessage[]): ContextCompressionMessage[] {
   return messages.map((message) => {
-    const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as LanguageModelV3Message | undefined;
+    const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
     const originalContent = message.metadata?.[ORIGINAL_CONTENT_KEY] as string | undefined;
 
     if (originalMessage && originalContent === message.content && message.entryType !== "summary") {
@@ -268,13 +270,13 @@ export function contextMessagesToPrompt(messages: ContextMessage[]): LanguageMod
     }
 
     if (message.entryType === "tool-call") {
-      return createToolCallPromptMessage(message);
+      return createToolCallMessage(message);
     }
 
     if (message.entryType === "tool-result") {
-      return createToolResultPromptMessage(message);
+      return createToolResultMessage(message);
     }
 
-    return createTextPromptMessage(message);
+    return createTextMessage(message);
   });
 }

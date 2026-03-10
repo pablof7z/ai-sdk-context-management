@@ -5,10 +5,10 @@ import { normalizeMessages } from "../messages.js";
 describe("validateSegments", () => {
   test("accepts disjoint persisted segments by default", () => {
     const messages = normalizeMessages([
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-      { role: "user", content: "c" },
-      { role: "assistant", content: "d" },
+      { id: "msg-1", role: "user", content: "a" },
+      { id: "msg-2", role: "assistant", content: "b" },
+      { id: "msg-3", role: "user", content: "c" },
+      { id: "msg-4", role: "assistant", content: "d" },
     ]);
 
     const result = validateSegments(messages, [
@@ -21,9 +21,9 @@ describe("validateSegments", () => {
 
   test("rejects gaps when full coverage is required", () => {
     const messages = normalizeMessages([
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-      { role: "user", content: "c" },
+      { id: "msg-1", role: "user", content: "a" },
+      { id: "msg-2", role: "assistant", content: "b" },
+      { id: "msg-3", role: "user", content: "c" },
     ]);
 
     const result = validateSegments(
@@ -41,9 +41,9 @@ describe("validateSegments", () => {
 
   test("rejects overlaps", () => {
     const messages = normalizeMessages([
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-      { role: "user", content: "c" },
+      { id: "msg-1", role: "user", content: "a" },
+      { id: "msg-2", role: "assistant", content: "b" },
+      { id: "msg-3", role: "user", content: "c" },
     ]);
 
     const result = validateSegments(messages, [
@@ -59,10 +59,10 @@ describe("validateSegments", () => {
 describe("applySegments", () => {
   test("replaces covered ranges with summary messages", () => {
     const messages = normalizeMessages([
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-      { role: "user", content: "c" },
-      { role: "assistant", content: "d" },
+      { id: "msg-1", role: "user", content: "a" },
+      { id: "msg-2", role: "assistant", content: "b" },
+      { id: "msg-3", role: "user", content: "c" },
+      { id: "msg-4", role: "assistant", content: "d" },
     ]);
 
     const result = applySegments(messages, [

@@ -1,109 +1,101 @@
 /**
- * Example 04: Full pipeline with cache + segment store + generator helper.
+ * Example 04: Full contextCompression pipeline.
+ *
+ * Shows caching, persisted segments, retrieval placeholders, and a custom tool policy together.
  */
+import { createCompressionCache, defaultToolPolicy } from "ai-sdk-context-management";
+import type { CompressionSegment, ContextCompressionResult } from "ai-sdk-context-management";
 import {
-  createCompressionCache,
-  createContextManagementMiddleware,
-  createSegmentGenerator,
-} from "ai-sdk-context-mgmt-middleware";
-import { generateConversation, generateToolExchange, printPrompt, runMiddlewareTransform } from "./helpers.js";
+  makeConversationTurns,
+  makeLargeText,
+  makeToolExchange,
+  printMessages,
+  printSegments,
+  resetIds,
+  runContextCompression,
+} from "./helpers.js";
 
 async function main() {
   console.log("=== Example 04: Full pipeline ===\n");
 
-  const externalStore = new Map<string, string>();
-  const segmentStore = new Map<string, any[]>();
-  const cache = createCompressionCache<any>(20);
-  let llmCalls = 0;
+  resetIds();
+  const conversationKey = "pipeline-demo";
+  const cache = createCompressionCache<ContextCompressionResult>({ maxEntries: 20 });
+  const segmentStore = new Map<string, CompressionSegment[]>();
 
-  const middleware = createContextManagementMiddleware({
-    maxTokens: 520,
-    compressionThreshold: 0.65,
-    protectedTailCount: 3,
-    cache,
-    segmentStore: {
-      load: (conversationKey) => segmentStore.get(conversationKey) ?? [],
-      append: (conversationKey, segments) => {
-        segmentStore.set(conversationKey, [...(segmentStore.get(conversationKey) ?? []), ...segments]);
+  const messages = [
+    ...makeConversationTurns([
+      {
+        user: "Summarize the incident review so far.",
+        assistant: "Deploy 143 caused 502s, rollback restored stability, and stale reads still need regression coverage.",
       },
-    },
-    resolveConversationKey({ params }) {
-      return (params.providerOptions as any).contextManagement.conversationId;
-    },
-    toolPolicy: ({ toolName, call, result, exchangePositionFromEnd }) => ({
-      call: call && call.tokens > 80 ? { policy: "truncate", maxTokens: exchangePositionFromEnd === 0 ? 64 : 32 } : undefined,
-      result: toolName === "important_data"
-        ? { policy: "keep" }
-        : toolName === "logs"
-          ? { policy: "remove" }
-          : result && result.tokens > 120
-            ? { policy: "truncate", maxTokens: exchangePositionFromEnd === 0 ? 80 : 40 }
-            : undefined,
-    }),
-    onToolContentTruncated: async (event) => {
-      const storageId = `store_${event.entryType}_${event.toolName}_${event.toolCallId}`;
-      externalStore.set(storageId, event.originalContent);
-      if (event.removed) {
-        return `[Content removed. Retrieve with externalStore.get("${storageId}")]`;
-      }
-      return undefined;
-    },
-    segmentGenerator: createSegmentGenerator({
-      async generate(prompt) {
-        llmCalls++;
-        const transcriptRangeMatch = prompt.match(/Transcript ids run from (\S+) to (\S+)\./m);
-        const firstId = transcriptRangeMatch?.[1] ?? "unknown";
-        const lastId = transcriptRangeMatch?.[2] ?? firstId;
-        return JSON.stringify({
-          segments: [{
-            fromId: firstId,
-            toId: lastId,
-            compressed: "Compressed project history with tool findings and pending work.",
-          }],
-        });
+      {
+        user: "What evidence did we collect?",
+        assistant: "The outage timeline, Redis client diff, and a stale-read reproduction from the logs.",
       },
+    ], "You are an incident review assistant."),
+    ...makeToolExchange({
+      toolName: "fs_read",
+      input: { path: "src/session-store.ts" },
+      output: makeLargeText("Source line", 24),
     }),
-    onDebug: (info) => {
-      console.log(
-        `[debug] cacheHit=${info.cacheHit}, modifications=${info.modifications.length}, ` +
-        `newSegments=${info.newSegments.length}, tokens ${info.originalTokenEstimate} -> ${info.compressedTokenEstimate}`
-      );
-    },
-  });
-
-  const prompt = [
-    ...generateConversation(4),
-    ...generateToolExchange("fs_read", 180),
-    ...generateConversation(2),
-    ...generateToolExchange("logs", 220),
-    ...generateToolExchange("important_data", 90),
-    ...generateConversation(2),
+    ...makeConversationTurns([
+      {
+        user: "Keep the conclusion concise.",
+        assistant: "I will keep the latest recommendation intact.",
+      },
+    ]),
   ];
-  const providerOptions = { contextManagement: { conversationId: "conv-full-pipeline" } };
 
-  console.log("-- first call --");
-  const firstOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
-  printPrompt("first output", firstOutput);
-  console.log(`segment store size: ${segmentStore.get("conv-full-pipeline")?.length ?? 0}`);
-  console.log(`cache size: ${cache.size}`);
-  console.log(`external store size: ${externalStore.size}`);
-  console.log(`generator calls: ${llmCalls}`);
+  const config = {
+    messages,
+    maxTokens: 120,
+    compressionThreshold: 0.7,
+    protectedTailCount: 2,
+    conversationKey,
+    cache,
+    retrievalToolName: "read_tool_output",
+    segmentStore: {
+      load: (key: string) => segmentStore.get(key) ?? [],
+      append: (key: string, segments: CompressionSegment[]) => {
+        segmentStore.set(key, [...(segmentStore.get(key) ?? []), ...segments]);
+      },
+    },
+    toolPolicy(context: Parameters<typeof defaultToolPolicy>[0]) {
+      const base = defaultToolPolicy(context);
 
-  console.log("\n-- second call (segment reuse expected) --");
-  const secondOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
-  printPrompt("second output", secondOutput);
-  console.log(`segment store size: ${segmentStore.get("conv-full-pipeline")?.length ?? 0}`);
-  console.log(`cache size: ${cache.size}`);
-  console.log(`external store size: ${externalStore.size}`);
-  console.log(`generator calls: ${llmCalls}`);
+      if (context.toolName === "fs_read") {
+        return {
+          ...base,
+          result: { policy: "remove" as const },
+        };
+      }
 
-  console.log("\n-- third call (cache hit expected) --");
-  const thirdOutput = await runMiddlewareTransform(middleware, prompt, providerOptions);
-  printPrompt("third output", thirdOutput);
-  console.log(`segment store size: ${segmentStore.get("conv-full-pipeline")?.length ?? 0}`);
-  console.log(`cache size: ${cache.size}`);
-  console.log(`external store size: ${externalStore.size}`);
-  console.log(`generator calls: ${llmCalls}`);
+      return base;
+    },
+    segmentGenerator: {
+      async generate({ messages: candidateMessages }: { messages: Array<{ id: string }> }) {
+        return [{
+          fromId: candidateMessages[0].id,
+          toId: candidateMessages[candidateMessages.length - 1].id,
+          compressed: "Deploy 143 introduced stale reads, rollback restored service, and follow-up work now targets regression coverage.",
+        }];
+      },
+    },
+  };
+
+  console.log("-- first call: generates new segments --");
+  const firstResult = await runContextCompression(config);
+  printMessages("first output", firstResult.messages);
+  printSegments("stored segments", segmentStore.get(conversationKey) ?? []);
+
+  console.log("\n-- second call: reuses stored segments --");
+  const secondResult = await runContextCompression({ ...config, cache: undefined });
+  printMessages("second output", secondResult.messages);
+
+  console.log("\n-- third call: cache serves the same rewritten messages --");
+  const thirdResult = await runContextCompression(config);
+  printMessages("third output", thirdResult.messages);
 }
 
 main().catch(console.error);

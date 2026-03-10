@@ -5,8 +5,8 @@ import { normalizeMessages } from "../messages.js";
 describe("createTranscript", () => {
   test("renders a transcript with short ids and escaped content", () => {
     const messages = normalizeMessages([
-      { role: "user", content: "Hello <world>", attributes: { source: "chat" } },
-      { role: "assistant", content: "Done", toolCallId: "call-1", toolName: "search", entryType: "tool-call" },
+      { id: "msg-1", role: "user", content: "Hello <world>", attributes: { source: "chat" } },
+      { id: "msg-2", role: "assistant", content: "Done", toolCallId: "call-1", toolName: "search", entryType: "tool-call" },
     ]);
 
     const transcript = createTranscript(messages);

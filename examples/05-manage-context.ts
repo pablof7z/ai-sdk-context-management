@@ -1,45 +1,46 @@
 /**
- * Example 05: Pure manageContext() usage without AI SDK middleware.
+ * Example 05: Inspecting the contextCompression result.
+ *
+ * Shows the rewritten messages plus the stats and segment metadata returned to the host.
  */
-import { createTranscript, manageContext } from "ai-sdk-context-mgmt-middleware";
+import { defaultToolPolicy } from "ai-sdk-context-management";
+import {
+  makeConversationTurns,
+  printMessages,
+  printSegments,
+  resetIds,
+  runContextCompression,
+} from "./helpers.js";
 
 async function main() {
-  console.log("=== Example 05: manageContext() ===\n");
+  console.log("=== Example 05: Inspecting result ===\n");
 
-  const input = [
-    { role: "user" as const, content: "We need to migrate Tenex compression into the shared package." },
-    { role: "assistant" as const, content: "We should preserve persistent segment reapplication and tool truncation." },
-    { role: "user" as const, content: "Make sure the protected tail stays intact." },
-    { role: "assistant" as const, content: "I will summarize the older range and keep the recent exchange." },
-  ];
-
-  const result = await manageContext({
-    messages: input,
-    maxTokens: 60,
-    compressionThreshold: 0.4,
-    protectedTailCount: 1,
+  resetIds();
+  const result = await runContextCompression({
+    messages: makeConversationTurns([
+      { user: "What should the package own?", assistant: "Pure prompt rewriting and segment application." },
+      { user: "What stays in the app?", assistant: "Lifecycle, persistence, routing, and event production." },
+      { user: "What matters most?", assistant: "Stable message ids and explicit invocation." },
+      { user: "What should the final API be called?", assistant: "contextCompression(...)." },
+    ], "You are helping refactor a context compression package."),
+    maxTokens: 120,
+    compressionThreshold: 0.6,
+    protectedTailCount: 2,
+    toolPolicy: defaultToolPolicy,
     segmentGenerator: {
       async generate({ messages }) {
         return [{
           fromId: messages[0].id,
           toId: messages[messages.length - 1].id,
-          compressed: "Summary: migrate compression, preserve persisted segments, keep the protected tail intact.",
+          compressed: "The package owns prompt rewriting and segments; the host owns lifecycle and storage.",
         }];
       },
     },
   });
 
-  console.log("rewritten messages:");
-  for (const [index, message] of result.messages.entries()) {
-    console.log(`  [${index}] ${message.role}/${message.entryType}: ${message.content}`);
-  }
-
-  console.log("\nnew segments:");
-  console.log(result.newSegments);
-
-  const transcript = createTranscript(result.messages);
-  console.log("\ntranscript preview:");
-  console.log(transcript.text);
+  printMessages("rewritten messages", result.messages);
+  printSegments("new segments", result.newSegments);
+  console.log("\nstats:", result.stats);
 }
 
 main().catch(console.error);

@@ -7,7 +7,6 @@ import type {
   TokenEstimator,
 } from "./types.js";
 import { createDefaultEstimator } from "./token-estimator.js";
-import { normalizeMessages } from "./messages.js";
 import { applyToolPolicy } from "./rule-based-compressor.js";
 import { applySegments, buildSummaryMessage, validateSegments } from "./segments.js";
 import { createTranscript } from "./transcript.js";
@@ -237,10 +236,9 @@ export async function manageContext(config: ManageContextConfig): Promise<Manage
   const estimator = config.estimator ?? createDefaultEstimator();
   const compressionThreshold = config.compressionThreshold ?? DEFAULT_COMPRESSION_THRESHOLD;
   const protectedTailCount = config.protectedTailCount ?? DEFAULT_PROTECTED_TAIL_COUNT;
-  const normalizedMessages = normalizeMessages(config.messages);
-  const originalTokenEstimate = estimator.estimateMessages(normalizedMessages);
+  const originalTokenEstimate = estimator.estimateMessages(config.messages);
 
-  const toolPolicyResult = await applyToolPolicy(normalizedMessages, {
+  const toolPolicyResult = await applyToolPolicy(config.messages, {
     estimator,
     currentTokenEstimate: originalTokenEstimate,
     maxContextTokens: config.maxTokens,

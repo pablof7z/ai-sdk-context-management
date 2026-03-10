@@ -226,6 +226,7 @@ async function applyEntryPolicy(
     entryType,
     toolName,
     toolCallId: message.toolCallId,
+    messageId: message.id,
     messageIndex: -1,
     originalContent,
     originalTokens,

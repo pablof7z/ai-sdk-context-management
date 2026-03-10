@@ -1,9 +1,11 @@
-import type { LanguageModelV3Message, LanguageModelV3Middleware } from "@ai-sdk/provider";
+import type { LanguageModelV3Message } from "@ai-sdk/provider";
 
 export type ContextRole = "system" | "user" | "assistant" | "tool";
 export type ContextEntryType = "text" | "tool-call" | "tool-result" | "summary";
 export type ToolEntryType = "tool-call" | "tool-result";
 export type ToolOutputPolicy = "keep" | "truncate" | "remove";
+
+export type ContextCompressionMessage = LanguageModelV3Message & { id: string };
 
 export interface ContextMessageInput {
   id?: string;
@@ -51,7 +53,22 @@ export interface TokenEstimator {
   estimateString(text: string): number;
 }
 
-export interface CompressionCache<T = ManageContextResult> {
+export interface ContextCompressionStats {
+  originalTokenEstimate: number;
+  postToolPolicyTokenEstimate: number;
+  postSegmentTokenEstimate: number;
+  finalTokenEstimate: number;
+}
+
+export interface ContextCompressionResult {
+  messages: ContextCompressionMessage[];
+  appliedSegments: CompressionSegment[];
+  newSegments: CompressionSegment[];
+  modifications: CompressionModification[];
+  stats: ContextCompressionStats;
+}
+
+export interface CompressionCache<T = ContextCompressionResult> {
   get(key: string): T | undefined;
   set(key: string, value: T): void;
   clear(): void;
@@ -96,6 +113,7 @@ export interface ToolContentTruncationEvent {
   entryType: ToolEntryType;
   toolName: string;
   toolCallId?: string;
+  messageId: string;
   messageIndex: number;
   originalContent: string;
   originalTokens: number;
@@ -138,23 +156,16 @@ export interface ValidationResult {
   error?: string;
 }
 
-export interface ManageContextStats {
-  originalTokenEstimate: number;
-  postToolPolicyTokenEstimate: number;
-  postSegmentTokenEstimate: number;
-  finalTokenEstimate: number;
-}
-
 export interface ManageContextResult {
   messages: ContextMessage[];
   appliedSegments: CompressionSegment[];
   newSegments: CompressionSegment[];
   modifications: CompressionModification[];
-  stats: ManageContextStats;
+  stats: ContextCompressionStats;
 }
 
 export interface ManageContextConfig {
-  messages: ContextMessageInput[];
+  messages: ContextMessage[];
   maxTokens: number;
   compressionThreshold?: number;
   protectedTailCount?: number;
@@ -171,7 +182,7 @@ export interface ManageContextConfig {
   ) => string | undefined | void | Promise<string | undefined | void>;
 }
 
-export interface ContextDebugInfo {
+export interface ContextCompressionDebugInfo {
   originalMessageCount: number;
   compressedMessageCount: number;
   originalTokenEstimate: number;
@@ -189,16 +200,8 @@ export interface SegmentStore {
   append?(conversationKey: string, segments: CompressionSegment[]): Promise<void> | void;
 }
 
-export interface MiddlewareContext {
-  params: Record<string, unknown> & { prompt?: LanguageModelV3Message[] };
-  type: string;
-  model: {
-    provider: string;
-    modelId: string;
-  };
-}
-
-export interface ContextManagementConfig {
+export interface ContextCompressionConfig {
+  messages: ContextCompressionMessage[];
   maxTokens: number;
   compressionThreshold?: number;
   protectedTailCount?: number;
@@ -206,16 +209,10 @@ export interface ContextManagementConfig {
   segmentGenerator?: SegmentGenerator;
   transcriptRenderer?: TranscriptRenderer;
   segmentStore?: SegmentStore;
-  resolveConversationKey?: (context: MiddlewareContext) => string;
-  cache?: CompressionCache<ManageContextResult>;
+  conversationKey?: string;
+  cache?: CompressionCache<ContextCompressionResult>;
   toolPolicy?: ToolPolicy;
-  onDebug?: (info: ContextDebugInfo) => void;
-  onToolContentTruncated?: (
-    event: ToolContentTruncationEvent
-  ) => string | undefined | void | Promise<string | undefined | void>;
-  onToolOutputTruncated?: (
-    event: ToolContentTruncationEvent
-  ) => string | undefined | void | Promise<string | undefined | void>;
+  retrievalToolName?: string;
+  retrievalToolArgName?: string;
+  onDebug?: (info: ContextCompressionDebugInfo) => void;
 }
-
-export type ContextManagementMiddleware = LanguageModelV3Middleware;

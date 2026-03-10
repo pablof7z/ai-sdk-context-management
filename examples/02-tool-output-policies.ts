@@ -1,45 +1,88 @@
 /**
  * Example 02: Always-on tool policy.
  *
- * Demonstrates that tool-call and tool-result compression runs even when the
- * conversation is still below the segment-compression threshold.
+ * Shows how one toolPolicy(context) can reason about both sides of a tool exchange.
  */
-import { createContextManagementMiddleware } from "ai-sdk-context-mgmt-middleware";
-import { generateConversation, generateToolExchange, getTextContent, printPrompt, runMiddlewareTransform } from "./helpers.js";
+import { defaultToolPolicy } from "ai-sdk-context-management";
+import {
+  makeConversationTurns,
+  makeLargeText,
+  makeToolExchange,
+  printMessages,
+  resetIds,
+  runContextCompression,
+} from "./helpers.js";
 
 async function main() {
   console.log("=== Example 02: Tool policy ===\n");
 
-  const truncatedEntries: Array<{ toolName: string; entryType: string; removed: boolean; originalTokens: number }> = [];
+  resetIds();
+  const messages = [
+    ...makeConversationTurns([
+      {
+        user: "Why did the incident review mention stale cache reads?",
+        assistant: "Because writes succeeded but some readers were still using the previous connection pool.",
+      },
+    ], "You are a debugging assistant."),
+    ...makeToolExchange({
+      toolName: "fs_write",
+      input: {
+        path: "src/session-store.ts",
+        patch: makeLargeText("Patch hunk", 16),
+      },
+      output: "Updated src/session-store.ts successfully.",
+    }),
+    ...makeToolExchange({
+      toolName: "fs_read",
+      input: { path: "src/session-store.ts" },
+      output: makeLargeText("Source line", 18),
+    }),
+    ...makeToolExchange({
+      toolName: "logs_search",
+      input: { query: "timeout exceeded", window: "last-6-hours" },
+      output: makeLargeText("Log event", 14),
+    }),
+    ...makeConversationTurns([
+      {
+        user: "Keep the final recommendation short.",
+        assistant: "I will keep the most recent recommendation verbatim.",
+      },
+    ]),
+  ];
 
-  const middleware = createContextManagementMiddleware({
+  const result = await runContextCompression({
+    messages,
     maxTokens: 20_000,
     compressionThreshold: 0.95,
-    toolPolicy: ({ toolName, call, result }) => ({
-      call: toolName === "debug_logs"
-        ? { policy: "remove" }
-        : (call && call.tokens > 60 ? { policy: "truncate", maxTokens: 24 } : undefined),
-      result: toolName === "important_data"
-        ? { policy: "keep" }
-        : toolName === "debug_logs"
-          ? { policy: "remove" }
-          : (result && result.tokens > 100 ? { policy: "truncate", maxTokens: 40 } : undefined),
-    }),
-    onToolContentTruncated: async (event) => {
-      truncatedEntries.push({
-        toolName: event.toolName,
-        entryType: event.entryType,
-        removed: event.removed,
-        originalTokens: event.originalTokens,
-      });
+    retrievalToolName: "read_tool_output",
+    toolPolicy(context) {
+      const base = defaultToolPolicy(context);
 
-      if (event.removed) {
-        return `[Content stored externally for ${event.entryType}:${event.toolName}:${event.toolCallId}]`;
+      if (context.toolName === "fs_write" && context.call) {
+        return {
+          ...base,
+          call: { policy: "truncate", maxTokens: 40 },
+          result: { policy: "keep" },
+        };
       }
 
-      return undefined;
+      if (context.toolName === "fs_read" && context.result) {
+        return {
+          ...base,
+          result: { policy: "truncate", maxTokens: 48 },
+        };
+      }
+
+      if (context.toolName === "logs_search") {
+        return {
+          ...base,
+          result: { policy: "remove" },
+        };
+      }
+
+      return base;
     },
-    onDebug: (info) => {
+    onDebug(info) {
       console.log(
         `[debug] tokens ${info.originalTokenEstimate} -> ${info.compressedTokenEstimate}, ` +
         `modifications=${info.modifications.length}`
@@ -47,31 +90,12 @@ async function main() {
     },
   });
 
-  const prompt = [
-    ...generateConversation(2),
-    ...generateToolExchange("search_results", 250),
-    ...generateToolExchange("debug_logs", 180),
-    ...generateToolExchange("important_data", 120),
-    ...generateConversation(1),
-  ];
+  printMessages("input", messages);
+  printMessages("output", result.messages);
 
-  printPrompt("input", prompt);
-  const output = await runMiddlewareTransform(middleware, prompt);
-  printPrompt("output", output);
-
-  console.log("\ntruncation events:");
-  for (const event of truncatedEntries) {
-    console.log(
-      `  ${event.toolName}/${event.entryType}: ${event.removed ? "removed" : "truncated"} ` +
-      `(${event.originalTokens} tokens)`
-    );
-  }
-
-  console.log("\nfinal tool messages:");
-  for (const message of output.filter((message) => message.role === "assistant" || message.role === "tool")) {
-    if (message.role === "assistant" || message.role === "tool") {
-      console.log(`  ${message.role}: ${getTextContent(message).slice(0, 120)}${getTextContent(message).length > 120 ? "..." : ""}`);
-    }
+  console.log("\nmodifications:");
+  for (const modification of result.modifications) {
+    console.log(`  ${modification.type} at message index ${modification.messageIndex}`);
   }
 }
 
