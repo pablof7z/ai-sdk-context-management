@@ -41,13 +41,7 @@ function getExchangeKey(message: ContextMessage): string {
   return `${message.id}:${message.entryType}`;
 }
 
-function isWriteHeavyTool(toolName: string): boolean {
-  return /(write|patch|edit|append|create|replace|insert|upsert|put)/i.test(toolName);
-}
 
-function isReadHeavyTool(toolName: string): boolean {
-  return /(read|search|grep|glob|find|list|fetch|curl|get|download|query)/i.test(toolName);
-}
 
 function buildToolExchanges(
   messages: ContextMessage[],
@@ -151,6 +145,10 @@ function normalizeDecision(decision: ToolEntryPolicyDecision | undefined): ToolE
   return decision ?? { policy: "keep" };
 }
 
+function shouldBypassToolCompression(message: ContextMessage): boolean {
+  return message.contextCompression?.neverTruncate === true;
+}
+
 export function defaultToolPolicy(context: ToolPolicyContext) {
   const pressure = context.maxContextTokens > 0
     ? context.currentTokenEstimate / context.maxContextTokens
@@ -166,7 +164,6 @@ export function defaultToolPolicy(context: ToolPolicyContext) {
     const callBudget = defaultTruncateTokens("tool-call", exchangeDepth, pressure);
     const shouldTruncateCall =
       callTokens > callBudget * 1.5 ||
-      (isWriteHeavyTool(context.toolName) && callTokens > 120) ||
       (exchangeDepth >= 2 && callTokens > 90) ||
       combinedTokens > 650;
 
@@ -186,7 +183,6 @@ export function defaultToolPolicy(context: ToolPolicyContext) {
       (exchangeDepth >= 3 && combinedTokens > 900);
     const shouldTruncateResult =
       resultTokens > resultBudget * 1.5 ||
-      (isReadHeavyTool(context.toolName) && resultTokens > 140) ||
       (exchangeDepth >= 1 && resultTokens > 120) ||
       combinedTokens > 650;
 
@@ -303,9 +299,11 @@ export async function applyToolPolicy(
       decisions.set(key, decision);
     }
 
-    const entryDecision = normalizeDecision(
-      message.entryType === "tool-call" ? decision.call : decision.result
-    );
+    const entryDecision = shouldBypassToolCompression(message)
+      ? { policy: "keep" }
+      : normalizeDecision(
+        message.entryType === "tool-call" ? decision.call : decision.result
+      );
     const applied = await applyEntryPolicy(
       message,
       exchange.toolName,
