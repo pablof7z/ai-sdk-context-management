@@ -35,6 +35,7 @@ export {
 } from "./public-mappers.js";
 
 export type {
+  BeforeToolCompression,
   CompressionCache,
   CompressionModification,
   CompressionSegment,
@@ -52,6 +53,7 @@ export type {
   SegmentValidationOptions,
   TokenEstimator,
   ToolEntryPolicyDecision,
+  ToolCompressionPlanEntry,
   ToolEntryType,
   ToolOutputPolicy,
   ToolPolicy,
@@ -71,6 +73,8 @@ export type {
   SummaryFailureMode,
   PromptMessage,
   PromptPruningDebugInfo,
+  PromptBeforeToolCompressionHook,
+  PromptToolCompressionPlanEntry,
   PromptToolEntryDecision,
   PromptToolPolicy,
   PromptToolPolicyContext,

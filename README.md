@@ -37,6 +37,7 @@ flowchart TD
 ```ts
 import {
   contextCompression,
+  createObjectSegmentGenerator,
   createSegmentGenerator,
   defaultToolPolicy,
 } from "ai-sdk-context-management";
@@ -57,9 +58,9 @@ const result = await contextCompression({
     save: (conversationKey, segments) => saveSegments(conversationKey, segments),
   },
   retrievalToolName: "read_tool_output",
-  segmentGenerator: createSegmentGenerator({
-    async generate(messagesText) {
-      return await cheapModel(messagesText);
+  segmentGenerator: createObjectSegmentGenerator({
+    async generate(prompt) {
+      return await cheapModel.generateObject(prompt);
     },
   }),
 });
@@ -82,10 +83,12 @@ await generateText({
 
 - `toolPolicy(context)`
   - Decide separately what to do with the tool call and the tool result.
+- `beforeToolCompression(entries)`
+  - Inspect the proposed tool-compression plan and optionally return the final per-entry decisions.
 - `retrievalToolName` / `retrievalToolArgName`
   - Replace truncated or removed tool content with a retrieval instruction that references the stable message ID.
 - `segmentGenerator`
-  - Use the default helper or provide your own implementation.
+  - Use `createSegmentGenerator(...)`, `createObjectSegmentGenerator(...)`, or provide your own implementation.
 - `promptTemplate` / `buildPrompt(input)`
   - Customize the default segment-generation prompt.
 - `transcriptRenderer`
@@ -111,6 +114,7 @@ Recommended reading order:
 ## Main Exports
 
 - `contextCompression(...)`
+- `createObjectSegmentGenerator(...)`
 - `createSegmentGenerator(...)`
 - `buildDefaultSegmentPrompt(...)`
 - `DEFAULT_SEGMENT_PROMPT_TEMPLATE`

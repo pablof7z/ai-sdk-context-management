@@ -244,6 +244,7 @@ export async function manageContext(config: ManageContextConfig): Promise<Manage
     currentTokenEstimate: effectiveTokenEstimate,
     maxContextTokens: config.maxTokens,
     toolPolicy: config.toolPolicy,
+    beforeToolCompression: config.beforeToolCompression,
     onToolContentTruncated: config.onToolContentTruncated,
     onToolOutputTruncated: config.onToolOutputTruncated,
   });

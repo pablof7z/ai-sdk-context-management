@@ -26,6 +26,7 @@ export async function prunePrompt(config: PrunePromptConfig): Promise<PrunePromp
     conversationKey: config.conversationKey ?? (segmentStore ? "__inline__" : undefined),
     cache: config.cache as CompressionCache<ContextCompressionResult> | undefined,
     toolPolicy: config.promptToolPolicy,
+    beforeToolCompression: config.beforeToolCompression,
     retrievalToolName: config.retrievalToolName,
     retrievalToolArgName: config.retrievalToolArgName,
     onDebug: config.onDebug,

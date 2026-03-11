@@ -44,6 +44,7 @@ function buildCacheScope(config: ContextCompressionConfig): Record<string, unkno
     priorContextTokens: config.priorContextTokens ?? 0,
     estimatorId: getObjectIdentity(config.estimator as object | undefined),
     toolPolicyId: getObjectIdentity(config.toolPolicy as object | undefined),
+    beforeToolCompressionId: getObjectIdentity(config.beforeToolCompression as object | undefined),
     segmentGeneratorId: getObjectIdentity(config.segmentGenerator as object | undefined),
     transcriptRendererId: getObjectIdentity(config.transcriptRenderer as object | undefined),
     segmentStoreId: getObjectIdentity(config.segmentStore as object | undefined),
@@ -166,6 +167,7 @@ export async function contextCompression(
     transcriptRenderer: config.transcriptRenderer,
     existingSegments,
     toolPolicy: config.toolPolicy,
+    beforeToolCompression: config.beforeToolCompression,
     onToolContentTruncated: createRetrievalPlaceholderFactory(config),
   });
 

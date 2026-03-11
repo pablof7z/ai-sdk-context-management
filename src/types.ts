@@ -3,7 +3,7 @@ import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
 export type ContextRole = "system" | "user" | "assistant" | "tool";
 export type ContextEntryType = "text" | "tool-call" | "tool-result" | "summary";
 export type ToolEntryType = "tool-call" | "tool-result";
-export type ToolOutputPolicy = "keep" | "truncate" | "remove";
+export type ToolOutputPolicy = "keep" | "truncate";
 
 export type ContextCompressionMessage =
   | {
@@ -115,6 +115,19 @@ export interface ToolPolicyDecision {
   result?: ToolEntryPolicyDecision;
 }
 
+export interface ToolCompressionPlanEntry {
+  message: ContextMessage;
+  messageIndex: number;
+  entryType: ToolEntryType;
+  toolName: string;
+  toolCallId?: string;
+  exchangePositionFromEnd: number;
+  combinedTokens: number;
+  call?: ToolPolicyEntryContext;
+  result?: ToolPolicyEntryContext;
+  decision: ToolEntryPolicyDecision;
+}
+
 export interface ToolPolicyContext {
   toolName: string;
   toolCallId?: string;
@@ -131,6 +144,10 @@ export type ToolPolicy = (
   context: ToolPolicyContext
 ) => ToolPolicyDecision | Promise<ToolPolicyDecision>;
 
+export type BeforeToolCompression = (
+  entries: readonly ToolCompressionPlanEntry[]
+) => ToolCompressionPlanEntry[] | void | Promise<ToolCompressionPlanEntry[] | void>;
+
 export interface ToolContentTruncationEvent {
   entryType: ToolEntryType;
   toolName: string;
@@ -139,15 +156,12 @@ export interface ToolContentTruncationEvent {
   messageIndex: number;
   originalContent: string;
   originalTokens: number;
-  removed: boolean;
 }
 
 export interface CompressionModification {
   type:
     | "tool-call-truncated"
-    | "tool-call-removed"
     | "tool-result-truncated"
-    | "tool-result-removed"
     | "message-removed"
     | "conversation-summarized";
   messageIndex: number;
@@ -197,6 +211,7 @@ export interface ManageContextConfig {
   transcriptRenderer?: TranscriptRenderer;
   existingSegments?: CompressionSegment[];
   toolPolicy?: ToolPolicy;
+  beforeToolCompression?: BeforeToolCompression;
   onToolContentTruncated?: (
     event: ToolContentTruncationEvent
   ) => string | undefined | void | Promise<string | undefined | void>;
@@ -236,6 +251,7 @@ export interface ContextCompressionConfig {
   conversationKey?: string;
   cache?: CompressionCache<ContextCompressionResult>;
   toolPolicy?: ToolPolicy;
+  beforeToolCompression?: BeforeToolCompression;
   retrievalToolName?: string;
   retrievalToolArgName?: string;
   onDebug?: (info: ContextCompressionDebugInfo) => void;

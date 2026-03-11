@@ -1,4 +1,5 @@
 import type {
+  BeforeToolCompression,
   CompressionCache,
   CompressionModification,
   ContextCompressionDebugInfo,
@@ -9,6 +10,7 @@ import type {
   TokenEstimator,
   ToolContentTruncationEvent,
   ToolEntryPolicyDecision,
+  ToolCompressionPlanEntry,
   ToolPolicy,
   ToolPolicyContext,
   ToolPolicyDecision,
@@ -109,6 +111,7 @@ export interface PrunePromptConfig {
   conversationKey?: string;
   cache?: CompressionCache<PrunePromptResult>;
   promptToolPolicy?: PromptToolPolicy;
+  beforeToolCompression?: PromptBeforeToolCompressionHook;
   retrievalToolName?: string;
   retrievalToolArgName?: string;
   onDebug?: (info: ContextCompressionDebugInfo) => void;
@@ -128,4 +131,6 @@ export type PromptToolPolicyContext = ToolPolicyContext;
 export type PromptToolPolicyDecision = ToolPolicyDecision;
 export type PromptToolPolicyEntryContext = ToolPolicyEntryContext;
 export type PromptToolEntryDecision = ToolEntryPolicyDecision;
+export type PromptToolCompressionPlanEntry = ToolCompressionPlanEntry;
+export type PromptBeforeToolCompressionHook = BeforeToolCompression;
 export type PromptToolTruncationEvent = ToolContentTruncationEvent;

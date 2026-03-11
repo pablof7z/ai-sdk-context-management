@@ -99,4 +99,42 @@ describe("prunePrompt", () => {
       '[Tool output removed. Use fetch_tool_output(id="prompt-tool-result") to retrieve the full output.]'
     );
   });
+
+  test("beforeToolCompression can preserve specific tool results verbatim", async () => {
+    const fullOutput = "x".repeat(3_000);
+    const messages: PromptMessage[] = [
+      {
+        id: "prompt-tool-call",
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call-1", toolName: "delegate", input: { prompt: "Say hello" } }],
+      },
+      {
+        id: "prompt-tool-result",
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "delegate",
+          output: { type: "text", value: fullOutput },
+        }],
+      },
+    ];
+
+    const result = await prunePrompt({
+      messages,
+      maxTokens: 5_000,
+      pruningThreshold: 1,
+      priorContextTokens: 4_900,
+      promptToolPolicy: () => ({ result: { policy: "remove" } }),
+      beforeToolCompression: (entries) => entries.map((entry) => (
+        entry.toolName === "delegate"
+          ? { ...entry, decision: { policy: "keep" } }
+          : entry
+      )),
+      retrievalToolName: "fetch_tool_output",
+      retrievalToolArgName: "id",
+    });
+
+    expect((result.messages[1].content[0] as { output: { value: string } }).output.value).toBe(fullOutput);
+  });
 });

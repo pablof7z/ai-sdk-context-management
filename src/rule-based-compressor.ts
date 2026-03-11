@@ -1,7 +1,9 @@
 import type {
+  BeforeToolCompression,
   CompressionModification,
   ContextMessage,
   TokenEstimator,
+  ToolCompressionPlanEntry,
   ToolContentTruncationEvent,
   ToolEntryPolicyDecision,
   ToolEntryType,
@@ -15,6 +17,7 @@ interface ToolPolicyOptions {
   currentTokenEstimate: number;
   maxContextTokens: number;
   toolPolicy?: ToolPolicy;
+  beforeToolCompression?: BeforeToolCompression;
   onToolContentTruncated?: (
     event: ToolContentTruncationEvent
   ) => string | undefined | void | Promise<string | undefined | void>;
@@ -127,72 +130,116 @@ function defaultTruncateTokens(
   return pressure > 0.8 ? 72 : 96;
 }
 
-function createPlaceholder(entryType: ToolEntryType): string {
-  return entryType === "tool-call"
-    ? "[Tool call input removed for brevity]"
-    : "[Tool output removed for brevity]";
-}
-
-function createModificationType(entryType: ToolEntryType, policy: Exclude<ToolOutputPolicy, "keep">): CompressionModification["type"] {
-  if (entryType === "tool-call") {
-    return policy === "remove" ? "tool-call-removed" : "tool-call-truncated";
-  }
-
-  return policy === "remove" ? "tool-result-removed" : "tool-result-truncated";
+function createModificationType(entryType: ToolEntryType): CompressionModification["type"] {
+  return entryType === "tool-call" ? "tool-call-truncated" : "tool-result-truncated";
 }
 
 function normalizeDecision(decision: ToolEntryPolicyDecision | undefined): ToolEntryPolicyDecision {
   return decision ?? { policy: "keep" };
 }
 
-function shouldBypassToolCompression(message: ContextMessage): boolean {
-  return message.contextCompression?.neverTruncate === true;
+function clonePlanEntry(entry: ToolCompressionPlanEntry): ToolCompressionPlanEntry {
+  return {
+    ...entry,
+    decision: { ...entry.decision },
+  };
 }
 
+async function resolveToolCompressionPlan(
+  entries: ToolCompressionPlanEntry[],
+  beforeToolCompression: BeforeToolCompression | undefined
+): Promise<ToolCompressionPlanEntry[]> {
+  if (!beforeToolCompression || entries.length === 0) {
+    return entries;
+  }
+
+  const override = await beforeToolCompression(entries.map(clonePlanEntry));
+  if (!override) {
+    return entries;
+  }
+
+  if (override.length !== entries.length) {
+    throw new Error("beforeToolCompression must return the same number of entries it received");
+  }
+
+  for (let i = 0; i < entries.length; i++) {
+    const original = entries[i];
+    const returned = override[i];
+
+    if (
+      returned.messageIndex !== original.messageIndex ||
+      returned.message.id !== original.message.id ||
+      returned.entryType !== original.entryType
+    ) {
+      throw new Error("beforeToolCompression must preserve entry ordering and identity");
+    }
+  }
+
+  return override;
+}
+
+// Fraction of total context budget allocated per tool exchange at depth=1.
+// Decays as 1/depth: at depth N, each exchange may use fraction/N of the context.
+// This means large results are truncated aggressively while tiny results persist indefinitely.
+const RESULT_BUDGET_FRACTION = 0.10;
+const CALL_BUDGET_FRACTION = 0.06;
+
+// Results exceeding this fraction of context are "heavy" (e.g. base64 images, large file reads).
+// Heavy results are removed (not just truncated) once they leave depth=0.
+const HEAVY_RESULT_FRACTION = 0.20;
+
+// Minimum tokens worth keeping — below this we remove rather than produce a useless stub.
+const MIN_KEEP_TOKENS = 32;
+
+/**
+ * Formula-based tool policy.
+ *
+ * Each exchange at depth D may retain at most `maxContext * fraction / D` tokens.
+ * This naturally handles both dimensions the user cares about:
+ *
+ *   - Large results (e.g. 100k base64 screenshot): exceed the depth=1 budget immediately
+ *     → truncated at depth=0, removed entirely at depth=1.
+ *
+ *   - Small results (e.g. 50-token directory listing): fit within budget even at depth=20+
+ *     → stay in context indefinitely until the budget genuinely can't hold them.
+ *
+ * Depth=0 (the most recent exchange) is always preserved in full: the LLM hasn't
+ * seen this result yet and needs it to continue reasoning.
+ */
 export function defaultToolPolicy(context: ToolPolicyContext) {
-  const pressure = context.maxContextTokens > 0
-    ? context.currentTokenEstimate / context.maxContextTokens
-    : 1;
-  const exchangeDepth = context.exchangePositionFromEnd;
-  const decision: { call?: ToolEntryPolicyDecision; result?: ToolEntryPolicyDecision } = {};
+  const depth = context.exchangePositionFromEnd;
+
+  // The most recent exchange is always preserved so the LLM sees what it just called.
+  if (depth === 0) {
+    return {};
+  }
+
+  const maxContext = context.maxContextTokens;
+  if (maxContext <= 0) {
+    return {};
+  }
 
   const callTokens = context.call?.tokens ?? 0;
   const resultTokens = context.result?.tokens ?? 0;
-  const combinedTokens = context.combinedTokens;
+  const decision: { call?: ToolEntryPolicyDecision; result?: ToolEntryPolicyDecision } = {};
 
   if (context.call) {
-    const callBudget = defaultTruncateTokens("tool-call", exchangeDepth, pressure);
-    const shouldTruncateCall =
-      callTokens > callBudget * 1.5 ||
-      (exchangeDepth >= 2 && callTokens > 90) ||
-      combinedTokens > 650;
-
-    if (shouldTruncateCall) {
-      decision.call = {
-        policy: "truncate",
-        maxTokens: callBudget,
-      };
+    const callAllowance = Math.max(MIN_KEEP_TOKENS, Math.floor(maxContext * CALL_BUDGET_FRACTION / depth));
+    if (callTokens > callAllowance) {
+      decision.call = { policy: "truncate", maxTokens: callAllowance };
     }
   }
 
   if (context.result) {
-    const resultBudget = defaultTruncateTokens("tool-result", exchangeDepth, pressure);
-    const shouldRemoveResult =
-      (exchangeDepth >= 4 && resultTokens > 140) ||
-      (exchangeDepth >= 3 && pressure > 0.9 && resultTokens > 100) ||
-      (exchangeDepth >= 3 && combinedTokens > 900);
-    const shouldTruncateResult =
-      resultTokens > resultBudget * 1.5 ||
-      (exchangeDepth >= 1 && resultTokens > 120) ||
-      combinedTokens > 650;
-
-    if (shouldRemoveResult) {
-      decision.result = { policy: "remove" };
-    } else if (shouldTruncateResult) {
-      decision.result = {
-        policy: "truncate",
-        maxTokens: resultBudget,
-      };
+    const resultAllowance = Math.floor(maxContext * RESULT_BUDGET_FRACTION / depth);
+    const isHeavy = resultTokens > maxContext * HEAVY_RESULT_FRACTION;
+    if (resultTokens > resultAllowance) {
+      // Heavy results (e.g. base64 screenshots) get truncated to the minimum stub so the
+      // agent still knows it called the tool, but we don't waste tokens on stale output.
+      const effectiveAllowance = (isHeavy || resultAllowance < MIN_KEEP_TOKENS)
+        ? MIN_KEEP_TOKENS
+        : resultAllowance;
+      decision.result = { policy: "truncate", maxTokens: effectiveAllowance };
     }
   }
 
@@ -269,6 +316,7 @@ export async function applyToolPolicy(
     currentTokenEstimate,
     maxContextTokens,
     toolPolicy,
+    beforeToolCompression,
     onToolContentTruncated,
     onToolOutputTruncated,
   } = options;
@@ -277,19 +325,18 @@ export async function applyToolPolicy(
   const exchanges = buildToolExchanges(messages, estimator, currentTokenEstimate, maxContextTokens);
   const decisions = new Map<string, Awaited<ReturnType<ToolPolicy>>>();
   const hook = onToolContentTruncated ?? onToolOutputTruncated;
+  const plannedEntries: ToolCompressionPlanEntry[] = [];
 
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
 
     if (message.entryType !== "tool-call" && message.entryType !== "tool-result") {
-      result.push(message);
       continue;
     }
 
     const key = getExchangeKey(message);
     const exchange = exchanges.get(key);
     if (!exchange) {
-      result.push(message);
       continue;
     }
 
@@ -299,16 +346,45 @@ export async function applyToolPolicy(
       decisions.set(key, decision);
     }
 
-    const entryDecision = shouldBypassToolCompression(message)
-      ? { policy: "keep" }
-      : normalizeDecision(
+    plannedEntries.push({
+      message,
+      messageIndex: i,
+      entryType: message.entryType,
+      toolName: exchange.toolName,
+      toolCallId: message.toolCallId,
+      exchangePositionFromEnd: exchange.exchangePositionFromEnd,
+      combinedTokens: exchange.combinedTokens,
+      call: exchange.call,
+      result: exchange.result,
+      decision: normalizeDecision(
         message.entryType === "tool-call" ? decision.call : decision.result
-      );
+      ),
+    });
+  }
+
+  const finalPlanEntries = await resolveToolCompressionPlan(plannedEntries, beforeToolCompression);
+  let planIndex = 0;
+
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+
+    if (message.entryType !== "tool-call" && message.entryType !== "tool-result") {
+      result.push(message);
+      continue;
+    }
+
+    const planEntry = finalPlanEntries[planIndex];
+    if (!planEntry || planEntry.messageIndex !== i || planEntry.message.id !== message.id) {
+      result.push(message);
+      continue;
+    }
+    planIndex += 1;
+
     const applied = await applyEntryPolicy(
       message,
-      exchange.toolName,
-      exchange.exchangePositionFromEnd,
-      entryDecision,
+      planEntry.toolName,
+      planEntry.exchangePositionFromEnd,
+      planEntry.decision,
       estimator,
       hook
         ? async (event) => hook({
