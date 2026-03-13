@@ -1,15 +1,28 @@
 export { createContextManagementRuntime } from "./runtime.js";
 export { SlidingWindowStrategy } from "./sliding-window-strategy.js";
 export { ScratchpadStrategy } from "./scratchpad-strategy.js";
+export { ToolResultDecayStrategy } from "./tool-result-decay-strategy.js";
+export { HeadAndTailStrategy } from "./head-and-tail-strategy.js";
+export { SystemPromptCachingStrategy } from "./system-prompt-caching-strategy.js";
+export { SummarizationStrategy } from "./summarization-strategy.js";
+export { CompactionToolStrategy } from "./compaction-tool-strategy.js";
+export { PinnedMessagesStrategy } from "./pinned-messages-strategy.js";
 export { createDefaultPromptTokenEstimator } from "./token-estimator.js";
 export { CONTEXT_MANAGEMENT_KEY } from "./types.js";
 
 export type {
+  CompactionStore,
+  CompactionStoreKey,
+  CompactionToolStrategyOptions,
   ContextManagementRequestContext,
   ContextManagementRuntime,
   ContextManagementStrategy,
   ContextManagementStrategyState,
   CreateContextManagementRuntimeOptions,
+  HeadAndTailStrategyOptions,
+  PinnedMessagesStrategyOptions,
+  PinnedStore,
+  PinnedStoreKey,
   PromptTokenEstimator,
   RemovedToolExchange,
   ScratchpadConversationEntry,
@@ -20,4 +33,7 @@ export type {
   ScratchpadToolInput,
   ScratchpadToolResult,
   SlidingWindowStrategyOptions,
+  SummarizationStrategyOptions,
+  SystemPromptCachingStrategyOptions,
+  ToolResultDecayStrategyOptions,
 } from "./types.js";

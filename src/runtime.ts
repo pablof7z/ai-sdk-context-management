@@ -13,6 +13,7 @@ import type {
 class StrategyState implements ContextManagementStrategyState {
   private currentParams: LanguageModelV3CallOptions;
   private readonly removedByToolCallId = new Map<string, RemovedToolExchange>();
+  private readonly pinned = new Set<string>();
 
   constructor(
     params: LanguageModelV3CallOptions,
@@ -36,6 +37,10 @@ class StrategyState implements ContextManagementStrategyState {
     return Array.from(this.removedByToolCallId.values());
   }
 
+  get pinnedToolCallIds(): ReadonlySet<string> {
+    return this.pinned;
+  }
+
   updatePrompt(prompt: LanguageModelV3CallOptions["prompt"]): void {
     this.currentParams = {
       ...this.currentParams,
@@ -46,6 +51,12 @@ class StrategyState implements ContextManagementStrategyState {
   addRemovedToolExchanges(exchanges: RemovedToolExchange[]): void {
     for (const exchange of exchanges) {
       this.removedByToolCallId.set(exchange.toolCallId, exchange);
+    }
+  }
+
+  addPinnedToolCallIds(toolCallIds: string[]): void {
+    for (const id of toolCallIds) {
+      this.pinned.add(id);
     }
   }
 }

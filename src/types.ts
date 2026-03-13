@@ -25,8 +25,10 @@ export interface ContextManagementStrategyState {
   readonly prompt: LanguageModelV3Prompt;
   readonly requestContext: ContextManagementRequestContext;
   readonly removedToolExchanges: readonly RemovedToolExchange[];
+  readonly pinnedToolCallIds: ReadonlySet<string>;
   updatePrompt(prompt: LanguageModelV3Prompt): void;
   addRemovedToolExchanges(exchanges: RemovedToolExchange[]): void;
+  addPinnedToolCallIds(toolCallIds: string[]): void;
 }
 
 export interface ContextManagementStrategy {
@@ -47,6 +49,62 @@ export interface ContextManagementRuntime {
 export interface PromptTokenEstimator {
   estimatePrompt(prompt: LanguageModelV3Prompt): number;
   estimateMessage(message: LanguageModelV3Message): number;
+}
+
+export interface ToolResultDecayStrategyOptions {
+  keepFullResultCount?: number;
+  truncatedMaxTokens?: number;
+  truncateWindowCount?: number;
+  placeholder?: string | ((toolName: string, toolCallId: string) => string);
+  estimator?: PromptTokenEstimator;
+}
+
+export interface HeadAndTailStrategyOptions {
+  headCount?: number;
+  tailCount?: number;
+}
+
+export interface SystemPromptCachingStrategyOptions {
+  consolidateSystemMessages?: boolean;
+}
+
+export interface SummarizationStrategyOptions {
+  summarize: (messages: LanguageModelV3Message[]) => Promise<string>;
+  maxPromptTokens: number;
+  keepLastMessages?: number;
+  estimator?: PromptTokenEstimator;
+}
+
+export interface CompactionStoreKey {
+  conversationId: string;
+  agentId: string;
+}
+
+export interface CompactionStore {
+  get(key: CompactionStoreKey): Promise<string | undefined> | string | undefined;
+  set(key: CompactionStoreKey, summary: string): Promise<void> | void;
+}
+
+export interface CompactionToolStrategyOptions {
+  summarize: (messages: LanguageModelV3Message[]) => Promise<string>;
+  keepLastMessages?: number;
+  compactionStore?: CompactionStore;
+  estimator?: PromptTokenEstimator;
+}
+
+export interface PinnedStoreKey {
+  conversationId: string;
+  agentId: string;
+}
+
+export interface PinnedStore {
+  get(key: PinnedStoreKey): Promise<string[]> | string[];
+  set(key: PinnedStoreKey, toolCallIds: string[]): Promise<void> | void;
+}
+
+export interface PinnedMessagesStrategyOptions {
+  pinnedStore: PinnedStore;
+  maxPinned?: number;
 }
 
 export interface SlidingWindowStrategyOptions {

@@ -13,7 +13,7 @@ import type {
   RemovedToolExchange,
 } from "./types.js";
 
-interface ToolExchange {
+export interface ToolExchange {
   toolCallId: string;
   toolName: string;
   callMessageIndex?: number;
