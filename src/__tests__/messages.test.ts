@@ -59,6 +59,46 @@ describe("messagesToContextMessages", () => {
     expect(contextMessages[1].id).toBe("evt-tool-result-1");
     expect(contextMessages[1].toolCallId).toBe("call-1");
   });
+
+  test("splits multi-part tool messages into one context message per tool part", () => {
+    const messages: ContextCompressionMessage[] = [
+      {
+        id: "evt-tool-call-batch",
+        role: "assistant",
+        content: [
+          { type: "text", text: "Running tools" },
+          { type: "tool-call", toolCallId: "call-1", toolName: "search", input: { q: "x" } },
+          { type: "tool-call", toolCallId: "call-2", toolName: "fs_read", input: { path: "/tmp/log.txt" } },
+        ],
+      },
+      {
+        id: "evt-tool-result-batch",
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "call-1", toolName: "search", output: { type: "text", value: "result-1" } },
+          { type: "tool-result", toolCallId: "call-2", toolName: "fs_read", output: { type: "text", value: "result-2" } },
+        ],
+      },
+    ];
+
+    const contextMessages = messagesToContextMessages(messages);
+
+    expect(contextMessages).toHaveLength(4);
+    expect(contextMessages.map((message) => message.id)).toEqual([
+      "evt-tool-call-batch#tool-call:0",
+      "evt-tool-call-batch#tool-call:1",
+      "evt-tool-result-batch#tool-result:0",
+      "evt-tool-result-batch#tool-result:1",
+    ]);
+    expect(contextMessages.map((message) => message.toolCallId)).toEqual([
+      "call-1",
+      "call-2",
+      "call-1",
+      "call-2",
+    ]);
+    expect(contextMessages[0].content).toContain("Running tools");
+    expect(contextMessages[1].content).toContain("fs_read");
+  });
 });
 
 describe("contextMessagesToMessages", () => {
@@ -137,5 +177,83 @@ describe("contextMessagesToMessages", () => {
     expect(toolMessage.id).toBe("evt-tool-result-1");
     expect(toolMessage.role).toBe("tool");
     expect((toolMessage.content[0] as any).output).toEqual({ type: "text", value: "truncated" });
+  });
+
+  test("collapses untouched multi-part tool messages back to their original shape", () => {
+    const messages: ContextCompressionMessage[] = [
+      {
+        id: "evt-tool-call-batch",
+        role: "assistant",
+        content: [
+          { type: "text", text: "Running tools" },
+          { type: "tool-call", toolCallId: "call-1", toolName: "search", input: { q: "x" } },
+          { type: "tool-call", toolCallId: "call-2", toolName: "fs_read", input: { path: "/tmp/log.txt" } },
+        ],
+      },
+      {
+        id: "evt-tool-result-batch",
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "call-1", toolName: "search", output: { type: "text", value: "result-1" } },
+          { type: "tool-result", toolCallId: "call-2", toolName: "fs_read", output: { type: "text", value: "result-2" } },
+        ],
+      },
+    ];
+
+    const rebuiltMessages = contextMessagesToMessages(messagesToContextMessages(messages));
+
+    expect(rebuiltMessages).toEqual(messages);
+  });
+
+  test("rebuilds modified multi-part tool messages as separate per-tool messages without dropping later parts", () => {
+    const messages: ContextCompressionMessage[] = [
+      {
+        id: "evt-tool-call-batch",
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "call-1", toolName: "search", input: { q: "x" } },
+          { type: "tool-call", toolCallId: "call-2", toolName: "fs_read", input: { path: "/tmp/log.txt" } },
+        ],
+      },
+      {
+        id: "evt-tool-result-batch",
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "call-1", toolName: "search", output: { type: "text", value: "result-1" } },
+          { type: "tool-result", toolCallId: "call-2", toolName: "fs_read", output: { type: "text", value: "result-2" } },
+        ],
+      },
+    ];
+
+    const contextMessages = messagesToContextMessages(messages);
+    contextMessages[0] = {
+      ...contextMessages[0],
+      content: "[Tool call input removed for brevity]",
+    };
+    contextMessages[2] = {
+      ...contextMessages[2],
+      content: "[Tool output removed for brevity]",
+    };
+
+    const rebuiltMessages = contextMessagesToMessages(contextMessages);
+
+    expect(rebuiltMessages).toHaveLength(4);
+    expect(rebuiltMessages.map((message) => message.role)).toEqual([
+      "assistant",
+      "assistant",
+      "tool",
+      "tool",
+    ]);
+    expect((rebuiltMessages[0].content[0] as any).toolCallId).toBe("call-1");
+    expect((rebuiltMessages[1].content[0] as any).toolCallId).toBe("call-2");
+    expect((rebuiltMessages[2].content[0] as any).toolCallId).toBe("call-1");
+    expect((rebuiltMessages[3].content[0] as any).toolCallId).toBe("call-2");
+    expect((rebuiltMessages[0].content[0] as any).input).toEqual({
+      _contextCompressionInput: "[Tool call input removed for brevity]",
+    });
+    expect((rebuiltMessages[2].content[0] as any).output).toEqual({
+      type: "text",
+      value: "[Tool output removed for brevity]",
+    });
   });
 });

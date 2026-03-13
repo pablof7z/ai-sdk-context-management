@@ -11,9 +11,17 @@ import type {
   ContextMessageInput,
 } from "./types.js";
 
+type AssistantCompressionMessage = Exclude<ContextCompressionMessage, { role: "system" | "tool" }> & {
+  role: "assistant";
+};
+
+type ToolCompressionMessage = Extract<ContextCompressionMessage, { role: "tool" }>;
+
 const ORIGINAL_MESSAGE_KEY = "__originalMessage";
 const ORIGINAL_CONTENT_KEY = "__originalContent";
 const ORIGINAL_TOOL_CALL_INPUT_KEY = "__originalToolCallInput";
+const ORIGINAL_TOOL_PART_INDEX_KEY = "__originalToolPartIndex";
+const ORIGINAL_TOOL_PART_COUNT_KEY = "__originalToolPartCount";
 
 function inferEntryType(message: ContextMessageInput): ContextEntryType {
   if (message.entryType) return message.entryType;
@@ -58,6 +66,23 @@ function extractTextContent(content: unknown): string {
 
 function isToolCallPart(part: unknown): part is LanguageModelV3ToolCallPart {
   return typeof part === "object" && part !== null && (part as any).type === "tool-call";
+}
+
+function isToolResultPart(part: unknown): part is LanguageModelV3ToolResultPart {
+  return typeof part === "object" && part !== null && (part as any).type === "tool-result";
+}
+
+function buildDerivedToolMessageId(
+  messageId: string,
+  entryType: "tool-call" | "tool-result",
+  partIndex: number,
+  partCount: number,
+): string {
+  if (partCount <= 1) {
+    return messageId;
+  }
+
+  return `${messageId}#${entryType}:${partIndex}`;
 }
 
 function formatToolResultOutput(output: LanguageModelV3ToolResultOutput | unknown): string {
@@ -131,6 +156,94 @@ function extractToolResultText(content: any[]): { content: string; toolCallId?: 
   };
 }
 
+function expandAssistantToolCallMessage(message: AssistantCompressionMessage): ContextMessageInput[] {
+  if (!Array.isArray(message.content)) {
+    return [];
+  }
+
+  const toolCallParts = message.content.filter(isToolCallPart);
+  if (toolCallParts.length === 0) {
+    return [];
+  }
+
+  const textParts = extractTextParts(
+    message.content.filter((part) => typeof part === "object" && part !== null && (part as any).type === "text") as Array<
+      LanguageModelV3TextPart | { type: string; text?: string }
+    >,
+  );
+
+  return toolCallParts.map((toolCallPart, partIndex) => {
+    const input = (toolCallPart as any).input ?? (toolCallPart as any).args ?? {};
+    const callText = `${toolCallPart.toolName}(${JSON.stringify(input)})`;
+    const extractedContent = textParts ? `${textParts}\n${callText}` : callText;
+
+    return {
+      id: buildDerivedToolMessageId(message.id, "tool-call", partIndex, toolCallParts.length),
+      sourceRecordId: message.sourceRecordId,
+      role: "assistant",
+      content: extractedContent,
+      entryType: "tool-call",
+      toolCallId: typeof toolCallPart.toolCallId === "string" ? toolCallPart.toolCallId : undefined,
+      toolName: typeof toolCallPart.toolName === "string" ? toolCallPart.toolName : undefined,
+      metadata: {
+        [ORIGINAL_MESSAGE_KEY]: message,
+        [ORIGINAL_CONTENT_KEY]: extractedContent,
+        [ORIGINAL_TOOL_CALL_INPUT_KEY]: input,
+        ...(toolCallParts.length > 1
+          ? {
+              [ORIGINAL_TOOL_PART_INDEX_KEY]: partIndex,
+              [ORIGINAL_TOOL_PART_COUNT_KEY]: toolCallParts.length,
+            }
+          : {}),
+      },
+    };
+  });
+}
+
+function expandToolResultMessage(message: ToolCompressionMessage): ContextMessageInput[] {
+  const toolResultParts = message.content.filter(isToolResultPart);
+  if (toolResultParts.length === 0) {
+    return [];
+  }
+
+  return toolResultParts.map((toolResultPart, partIndex) => {
+    const legacyContent = (toolResultPart as any).content;
+    let extractedContent = "";
+
+    if (legacyContent !== undefined) {
+      if (typeof legacyContent === "string") {
+        extractedContent = legacyContent;
+      } else if (Array.isArray(legacyContent)) {
+        extractedContent = extractTextParts(legacyContent);
+      } else {
+        extractedContent = JSON.stringify(legacyContent);
+      }
+    } else {
+      extractedContent = formatToolResultOutput(toolResultPart.output);
+    }
+
+    return {
+      id: buildDerivedToolMessageId(message.id, "tool-result", partIndex, toolResultParts.length),
+      sourceRecordId: message.sourceRecordId,
+      role: "tool",
+      content: extractedContent,
+      entryType: "tool-result",
+      toolCallId: typeof toolResultPart.toolCallId === "string" ? toolResultPart.toolCallId : undefined,
+      toolName: typeof toolResultPart.toolName === "string" ? toolResultPart.toolName : undefined,
+      metadata: {
+        [ORIGINAL_MESSAGE_KEY]: message,
+        [ORIGINAL_CONTENT_KEY]: extractedContent,
+        ...(toolResultParts.length > 1
+          ? {
+              [ORIGINAL_TOOL_PART_INDEX_KEY]: partIndex,
+              [ORIGINAL_TOOL_PART_COUNT_KEY]: toolResultParts.length,
+            }
+          : {}),
+      },
+    };
+  });
+}
+
 export function normalizeMessages(messages: ContextMessageInput[]): ContextMessage[] {
   const seenIds = new Set<string>();
 
@@ -153,9 +266,9 @@ export function normalizeMessages(messages: ContextMessageInput[]): ContextMessa
 }
 
 export function messagesToContextMessages(messages: ContextCompressionMessage[]): ContextMessage[] {
-  return normalizeMessages(messages.map((message) => {
+  return normalizeMessages(messages.flatMap((message) => {
     if (message.role === "system") {
-      return {
+      return [{
         id: message.id,
         sourceRecordId: message.sourceRecordId,
         role: "system",
@@ -164,51 +277,36 @@ export function messagesToContextMessages(messages: ContextCompressionMessage[])
           [ORIGINAL_MESSAGE_KEY]: message,
           [ORIGINAL_CONTENT_KEY]: extractTextContent(message.content),
         },
-      };
+      }];
     }
 
     const content = message.content;
 
     if (message.role === "tool") {
-      const result = Array.isArray(content)
-        ? extractToolResultText(content as any[])
-        : { content: extractTextContent(content) };
-      return {
+      if (Array.isArray(content)) {
+        return expandToolResultMessage(message);
+      }
+
+      return [{
         id: message.id,
         sourceRecordId: message.sourceRecordId,
         role: "tool",
-        content: result.content,
+        content: extractTextContent(content),
         entryType: "tool-result",
-        toolCallId: result.toolCallId,
-        toolName: result.toolName,
         metadata: {
           [ORIGINAL_MESSAGE_KEY]: message,
-          [ORIGINAL_CONTENT_KEY]: result.content,
+          [ORIGINAL_CONTENT_KEY]: extractTextContent(content),
         },
-      };
+      }];
     }
 
     if (message.role === "assistant" && Array.isArray(content) && content.some(isToolCallPart)) {
-      const result = extractToolCallText(content as any[]);
-      return {
-        id: message.id,
-        sourceRecordId: message.sourceRecordId,
-        role: "assistant",
-        content: result.content,
-        entryType: "tool-call",
-        toolCallId: result.toolCallId,
-        toolName: result.toolName,
-        metadata: {
-          [ORIGINAL_MESSAGE_KEY]: message,
-          [ORIGINAL_CONTENT_KEY]: result.content,
-          [ORIGINAL_TOOL_CALL_INPUT_KEY]: result.toolInput,
-        },
-      };
+      return expandAssistantToolCallMessage(message as AssistantCompressionMessage);
     }
 
     const extractedContent = extractTextContent(content);
 
-    return {
+    return [{
       id: message.id,
       sourceRecordId: message.sourceRecordId,
       role: message.role,
@@ -218,7 +316,7 @@ export function messagesToContextMessages(messages: ContextCompressionMessage[])
         [ORIGINAL_MESSAGE_KEY]: message,
         [ORIGINAL_CONTENT_KEY]: extractedContent,
       },
-    } as ContextMessageInput;
+    } as ContextMessageInput];
   }));
 }
 
@@ -259,9 +357,10 @@ function createTextMessage(message: ContextMessage): ContextCompressionMessage {
 function createToolCallMessage(message: ContextMessage): ContextCompressionMessage {
   const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
   const originalContent = message.metadata?.[ORIGINAL_CONTENT_KEY] as string | undefined;
+  const originalToolPartIndex = message.metadata?.[ORIGINAL_TOOL_PART_INDEX_KEY] as number | undefined;
   const originalPart = originalMessage?.role === "assistant"
     ? Array.isArray(originalMessage.content)
-      ? originalMessage.content.find(isToolCallPart)
+      ? originalMessage.content.filter(isToolCallPart)[originalToolPartIndex ?? 0]
       : undefined
     : undefined;
 
@@ -287,7 +386,10 @@ function createToolCallMessage(message: ContextMessage): ContextCompressionMessa
 
 function createToolResultMessage(message: ContextMessage): ContextCompressionMessage {
   const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
-  const originalPart = originalMessage?.role === "tool" ? originalMessage.content[0] : undefined;
+  const originalToolPartIndex = message.metadata?.[ORIGINAL_TOOL_PART_INDEX_KEY] as number | undefined;
+  const originalPart = originalMessage?.role === "tool"
+    ? originalMessage.content.filter(isToolResultPart)[originalToolPartIndex ?? 0]
+    : undefined;
 
   return {
     id: message.id,
@@ -305,22 +407,72 @@ function createToolResultMessage(message: ContextMessage): ContextCompressionMes
 }
 
 export function contextMessagesToMessages(messages: ContextMessage[]): ContextCompressionMessage[] {
-  return messages.map((message) => {
+  const rebuiltMessages: ContextCompressionMessage[] = [];
+
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
     const originalMessage = message.metadata?.[ORIGINAL_MESSAGE_KEY] as ContextCompressionMessage | undefined;
     const originalContent = message.metadata?.[ORIGINAL_CONTENT_KEY] as string | undefined;
+    const originalToolPartCount = message.metadata?.[ORIGINAL_TOOL_PART_COUNT_KEY] as number | undefined;
+
+    if (originalMessage && typeof originalToolPartCount === "number" && originalToolPartCount > 1) {
+      const group = [message];
+      let groupIndex = index + 1;
+
+      while (
+        groupIndex < messages.length &&
+        messages[groupIndex].metadata?.[ORIGINAL_MESSAGE_KEY] === originalMessage &&
+        messages[groupIndex].metadata?.[ORIGINAL_TOOL_PART_COUNT_KEY] === originalToolPartCount
+      ) {
+        group.push(messages[groupIndex]);
+        groupIndex++;
+      }
+
+      const allPartsPreserved = group.length === originalToolPartCount &&
+        group.every((groupedMessage) => (
+          groupedMessage.metadata?.[ORIGINAL_CONTENT_KEY] === groupedMessage.content &&
+          groupedMessage.entryType !== "summary"
+        ));
+
+      if (allPartsPreserved) {
+        rebuiltMessages.push(originalMessage);
+      } else {
+        for (const groupedMessage of group) {
+          if (groupedMessage.entryType === "tool-call") {
+            rebuiltMessages.push(createToolCallMessage(groupedMessage));
+            continue;
+          }
+
+          if (groupedMessage.entryType === "tool-result") {
+            rebuiltMessages.push(createToolResultMessage(groupedMessage));
+            continue;
+          }
+
+          rebuiltMessages.push(createTextMessage(groupedMessage));
+        }
+      }
+
+      index = groupIndex - 1;
+      continue;
+    }
 
     if (originalMessage && originalContent === message.content && message.entryType !== "summary") {
-      return originalMessage;
+      rebuiltMessages.push(originalMessage);
+      continue;
     }
 
     if (message.entryType === "tool-call") {
-      return createToolCallMessage(message);
+      rebuiltMessages.push(createToolCallMessage(message));
+      continue;
     }
 
     if (message.entryType === "tool-result") {
-      return createToolResultMessage(message);
+      rebuiltMessages.push(createToolResultMessage(message));
+      continue;
     }
 
-    return createTextMessage(message);
-  });
+    rebuiltMessages.push(createTextMessage(message));
+  }
+
+  return rebuiltMessages;
 }
