@@ -66,6 +66,14 @@ async function main() {
     middleware: runtime.middleware,
   });
 
+  const requestContext = {
+    contextManagement: {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      agentLabel: "Alpha",
+    },
+  };
+
   const result = streamText({
     model,
     messages: [
@@ -82,20 +90,8 @@ async function main() {
     ],
     tools: runtime.optionalTools,
     stopWhen: stepCountIs(2),
-    providerOptions: {
-      contextManagement: {
-        conversationId: "conv-1",
-        agentId: "agent-1",
-        agentLabel: "Alpha",
-      },
-    },
-    experimental_context: {
-      contextManagement: {
-        conversationId: "conv-1",
-        agentId: "agent-1",
-        agentLabel: "Alpha",
-      },
-    },
+    providerOptions: requestContext,
+    experimental_context: requestContext,
   });
 
   await result.text;

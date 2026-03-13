@@ -20,10 +20,7 @@ npm install ai @ai-sdk/provider ai-sdk-context-management
 
 ## Request Context Contract
 
-The host must pass the same request-scoped identity in both:
-
-- `providerOptions.contextManagement`
-- `experimental_context.contextManagement`
+The middleware reads `providerOptions.contextManagement` and returned tools read `experimental_context.contextManagement`. Both must carry the same request-scoped identity:
 
 ```ts
 {
@@ -33,8 +30,7 @@ The host must pass the same request-scoped identity in both:
 }
 ```
 
-The middleware reads `providerOptions.contextManagement`.  
-Returned tools read `experimental_context.contextManagement`.
+Define it once and pass it to both:
 
 ## Quick Start
 
@@ -75,6 +71,14 @@ const model = wrapLanguageModel({
   middleware: runtime.middleware,
 });
 
+const requestContext = {
+  contextManagement: {
+    conversationId: "conv-123",
+    agentId: "agent-456",
+    agentLabel: "Researcher",
+  },
+};
+
 const result = await generateText({
   model,
   messages,
@@ -82,20 +86,8 @@ const result = await generateText({
     ...agentTools,
     ...runtime.optionalTools,
   },
-  providerOptions: {
-    contextManagement: {
-      conversationId: "conv-123",
-      agentId: "agent-456",
-      agentLabel: "Researcher",
-    },
-  },
-  experimental_context: {
-    contextManagement: {
-      conversationId: "conv-123",
-      agentId: "agent-456",
-      agentLabel: "Researcher",
-    },
-  },
+  providerOptions: requestContext,
+  experimental_context: requestContext,
 });
 ```
 

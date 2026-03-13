@@ -67,6 +67,14 @@ describe("context management runtime integration", () => {
       middleware: runtime.middleware,
     });
 
+    const requestContext = {
+      contextManagement: {
+        conversationId: "conv-1",
+        agentId: "agent-1",
+        agentLabel: "Alpha",
+      },
+    };
+
     const result = streamText({
       model: wrappedModel,
       messages: [
@@ -83,20 +91,8 @@ describe("context management runtime integration", () => {
       ],
       tools: runtime.optionalTools,
       stopWhen: stepCountIs(2),
-      providerOptions: {
-        contextManagement: {
-          conversationId: "conv-1",
-          agentId: "agent-1",
-          agentLabel: "Alpha",
-        },
-      },
-      experimental_context: {
-        contextManagement: {
-          conversationId: "conv-1",
-          agentId: "agent-1",
-          agentLabel: "Alpha",
-        },
-      },
+      providerOptions: requestContext,
+      experimental_context: requestContext,
     });
 
     expect(await result.text).toBe("done");
