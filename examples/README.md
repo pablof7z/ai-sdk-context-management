@@ -33,8 +33,9 @@ npx tsx 04-composed-strategies.ts
 
 - shows fallback summarization once a prompt exceeds a configured token budget
 - keeps the recent tail raw and compresses only older history
+- demonstrates the low-level `SummarizationStrategy`; most hosts should prefer `LLMSummarizationStrategy`
 
 ### `04-composed-strategies.ts`
 
-- composes caching, decay, summarization, and reminders into one pipeline
+- composes caching, decay, LLM-backed summarization, and reminders into one pipeline
 - demonstrates the telemetry callback so hosts can inspect runtime decisions

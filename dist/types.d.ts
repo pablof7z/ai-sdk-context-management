@@ -1,5 +1,5 @@
 import type { LanguageModelV3CallOptions, LanguageModelV3Message, LanguageModelV3Middleware, LanguageModelV3Prompt } from "@ai-sdk/provider";
-import type { ToolSet } from "ai";
+import type { LanguageModel, ToolSet } from "ai";
 export declare const CONTEXT_MANAGEMENT_KEY = "contextManagement";
 export interface ContextManagementRequestContext {
     conversationId: string;
@@ -146,6 +146,21 @@ export interface SummarizationStrategyOptions {
     maxPromptTokens: number;
     keepLastMessages?: number;
     estimator?: PromptTokenEstimator;
+}
+export interface LlmSummarizerFormattingOptions {
+    maxTranscriptChars?: number;
+    maxPartChars?: number;
+    deterministicSummaryMaxChars?: number;
+}
+export interface LlmSummarizerOptions {
+    model: LanguageModel;
+    providerOptions?: LanguageModelV3CallOptions["providerOptions"];
+    maxOutputTokens?: number;
+    systemPrompt?: string;
+    temperature?: number;
+    formatting?: LlmSummarizerFormattingOptions;
+}
+export interface LLMSummarizationStrategyOptions extends Omit<SummarizationStrategyOptions, "summarize">, LlmSummarizerOptions {
 }
 export interface CompactionStoreKey {
     conversationId: string;

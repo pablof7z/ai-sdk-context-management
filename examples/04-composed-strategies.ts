@@ -1,7 +1,7 @@
 /**
  * Composed Strategies — Graduated context management with telemetry
  *
- * Combines SystemPromptCaching + ToolResultDecay + Summarization +
+ * Combines SystemPromptCaching + ToolResultDecay + LLM-backed summarization +
  * Scratchpad + ContextUtilizationReminder to show a graduated stack.
  *
  * Requires: ollama running locally with qwen2.5:3b pulled
@@ -11,8 +11,8 @@ import type { LanguageModelV3Middleware, LanguageModelV3Prompt } from "@ai-sdk/p
 import { ollama } from "ollama-ai-provider-v2";
 import {
   ContextUtilizationReminderStrategy,
+  LLMSummarizationStrategy,
   ScratchpadStrategy,
-  SummarizationStrategy,
   createDefaultPromptTokenEstimator,
   createContextManagementRuntime,
   SystemPromptCachingStrategy,
@@ -27,6 +27,7 @@ const CONTEXT_OPTIONS = {
 async function main() {
   const scratchpads = new Map<string, any>();
   const estimator = createDefaultPromptTokenEstimator();
+  const base = ollama("qwen2.5:3b");
   const runtime = createContextManagementRuntime({
     strategies: [
       new SystemPromptCachingStrategy({ consolidateSystemMessages: true }),
@@ -38,8 +39,8 @@ async function main() {
         placeholder: "[omitted]",
         estimator,
       }),
-      new SummarizationStrategy({
-        summarize: async (messages) => `Summary of ${messages.length} older messages`,
+      new LLMSummarizationStrategy({
+        model: base,
         maxPromptTokens: 420,
         keepLastMessages: 6,
         estimator,
@@ -84,7 +85,6 @@ async function main() {
     },
   };
 
-  const base = ollama("qwen2.5:3b");
   const logged = wrapLanguageModel({ model: base, middleware: logging });
   const model = wrapLanguageModel({ model: logged, middleware: runtime.middleware });
 
@@ -138,7 +138,7 @@ async function main() {
   ];
 
   console.log(`=== Full conversation: ${messages.length} messages (3 tool exchanges) ===`);
-  console.log("Pipeline: SystemPromptCaching -> ToolResultDecay -> Summarization -> Scratchpad -> UtilizationWarning\n");
+  console.log("Pipeline: SystemPromptCaching -> ToolResultDecay -> LLMSummarization -> Scratchpad -> UtilizationWarning\n");
 
   const result = await generateText({
     model,
@@ -151,7 +151,7 @@ async function main() {
   console.log("\n=== Strategy effects ===");
   console.log("1. SystemPromptCaching: system messages consolidated into one for cache efficiency");
   console.log("2. ToolResultDecay: older tool results are compressed before bigger fallbacks kick in");
-  console.log("3. Summarization: only used if the prompt is still too large after decay");
+  console.log("3. LLMSummarization: only used if the prompt is still too large after decay");
   console.log("4. Scratchpad: always renders agent notes / omitted exchanges");
   console.log("5. UtilizationWarning: warns when the working budget is getting tight");
 

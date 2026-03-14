@@ -12,7 +12,7 @@ Typical graduated stacks combine:
 
 - `SystemPromptCachingStrategy`
 - `ToolResultDecayStrategy`
-- `SummarizationStrategy`
+- `LLMSummarizationStrategy`
 - `ScratchpadStrategy`
 - `ContextUtilizationReminderStrategy`
 
@@ -40,8 +40,8 @@ The middleware reads `providerOptions.contextManagement` and returned tools read
 import { generateText, wrapLanguageModel } from "ai";
 import {
   ContextUtilizationReminderStrategy,
+  LLMSummarizationStrategy,
   ScratchpadStrategy,
-  SummarizationStrategy,
   SystemPromptCachingStrategy,
   ToolResultDecayStrategy,
   createContextManagementRuntime,
@@ -58,10 +58,8 @@ const runtime = createContextManagementRuntime({
       maxPromptTokens: 24_000,
       estimator,
     }),
-    new SummarizationStrategy({
-      summarize: async (messages) => {
-        return `Summary of ${messages.length} messages`;
-      },
+    new LLMSummarizationStrategy({
+      model: summarizerModel,
       maxPromptTokens: 36_000,
       estimator,
     }),
@@ -170,6 +168,27 @@ Behavior:
 - replaces older tool outputs with placeholders
 - leaves the tool-call / reasoning chain intact
 
+### `LLMSummarizationStrategy`
+
+Options:
+
+- `model`
+- `providerOptions`
+- `maxOutputTokens`
+- `systemPrompt`
+- `temperature`
+- `formatting`
+- `maxPromptTokens`
+- `keepLastMessages`
+- `estimator`
+
+Behavior:
+
+- formats older messages into a bounded transcript
+- uses the provided AI SDK model to summarize older context
+- falls back to a deterministic compressed transcript if the LLM call fails or returns empty text
+- preserves tool-call/tool-result adjacency at the tail boundary
+
 ### `SummarizationStrategy`
 
 Options:
@@ -184,6 +203,8 @@ Behavior:
 - keeps recent tail messages raw
 - summarizes older messages only after the prompt crosses a configured threshold
 - preserves tool-call/tool-result adjacency at the tail boundary
+
+Use this low-level strategy when you already have your own summarization function. Most hosts should prefer `LLMSummarizationStrategy`.
 
 ### `ScratchpadStrategy`
 
