@@ -91,10 +91,10 @@ function buildReminderBlock(options) {
         }
     }
     if (reminderTone === "informational") {
-        lines.push("You can update these notes or future omissions with scratchpad(...).");
+        lines.push("You can update these notes or future omissions with scratchpad(...). Notes persist within this conversation only — they do not carry over to new conversations.");
     }
     else if (reminderTone === "urgent") {
-        lines.push("Use scratchpad(...) now to preserve progress or proactively remove stale context.");
+        lines.push("Use scratchpad(...) now to preserve progress within this conversation or proactively remove stale context. Notes do not carry over to new conversations.");
     }
     lines.push("[/Context management]");
     return lines.join("\n");
@@ -112,7 +112,7 @@ export class ScratchpadStrategy {
             options.maxRemovedToolReminderItems ?? DEFAULT_MAX_REMOVED_TOOL_REMINDER_ITEMS;
         this.optionalTools = {
             scratchpad: tool({
-                description: "Update your scratchpad and proactively remove older context from future turns.",
+                description: "Update your scratchpad and proactively remove older context from future turns. Scratchpad notes persist within this conversation only — they do not carry over to new conversations.",
                 inputSchema: jsonSchema({
                     type: "object",
                     additionalProperties: false,
