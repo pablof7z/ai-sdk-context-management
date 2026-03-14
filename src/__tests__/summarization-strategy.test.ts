@@ -10,10 +10,11 @@ const estimator = {
   estimatePrompt: (prompt: LanguageModelV3Prompt) => prompt.length * 100,
 };
 
-function createMockState(prompt: LanguageModelV3Prompt): ContextManagementStrategyState & {
+function createMockState(prompt: LanguageModelV3Prompt, pinnedIds: string[] = []): ContextManagementStrategyState & {
   capturedRemovedExchanges: RemovedToolExchange[];
 } {
   const capturedRemovedExchanges: RemovedToolExchange[] = [];
+  const pinnedToolCallIds = new Set(pinnedIds);
 
   return {
     params: {
@@ -28,7 +29,7 @@ function createMockState(prompt: LanguageModelV3Prompt): ContextManagementStrate
     prompt,
     requestContext: { conversationId: "conv-1", agentId: "agent-1" },
     removedToolExchanges: [],
-    pinnedToolCallIds: new Set(),
+    pinnedToolCallIds,
     capturedRemovedExchanges,
     updatePrompt(newPrompt: LanguageModelV3Prompt) {
       (this as any).prompt = newPrompt;
@@ -36,7 +37,11 @@ function createMockState(prompt: LanguageModelV3Prompt): ContextManagementStrate
     addRemovedToolExchanges(exchanges: RemovedToolExchange[]) {
       capturedRemovedExchanges.push(...exchanges);
     },
-    addPinnedToolCallIds() {},
+    addPinnedToolCallIds(toolCallIds: string[]) {
+      for (const id of toolCallIds) {
+        pinnedToolCallIds.add(id);
+      }
+    },
   };
 }
 
@@ -168,7 +173,7 @@ describe("SummarizationStrategy", () => {
     expect(calls).toHaveLength(1);
     // Should include the previous summary + 2 summarizable non-system messages
     expect(calls[0]).toHaveLength(3);
-    expect(calls[0][0]).toBe(previousSummary);
+    expect(calls[0][0]).toEqual(previousSummary);
 
     // The old summary system message should be removed and replaced with the new one
     const summaryMessages = state.prompt.filter(
@@ -220,6 +225,52 @@ describe("SummarizationStrategy", () => {
       toolName: "read_file",
       reason: "summarization",
     });
+  });
+
+  test("pinned tool exchanges stay raw and out of the summary input", async () => {
+    const { fn: summarize, calls } = makeSummarize();
+    const strategy = new SummarizationStrategy({
+      summarize,
+      maxPromptTokens: 200,
+      keepLastMessages: 1,
+      estimator,
+    });
+
+    const prompt: LanguageModelV3Prompt = [
+      { role: "system", content: "system" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "call-1", toolName: "read_file", input: { path: "a.ts" } },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "call-1", toolName: "read_file", output: { type: "text", value: "contents" } },
+        ],
+      },
+      { role: "user", content: [{ type: "text", text: "older question" }] },
+      { role: "assistant", content: [{ type: "text", text: "older answer" }] },
+      { role: "user", content: [{ type: "text", text: "latest" }] },
+    ];
+
+    const state = createMockState(prompt, ["call-1"]);
+    await strategy.apply(state);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].some((message) =>
+      message.role !== "system" &&
+      message.content.some((part) =>
+        (part.type === "tool-call" || part.type === "tool-result") && part.toolCallId === "call-1"
+      )
+    )).toBe(false);
+    expect(state.prompt.some((message) =>
+      message.role !== "system" &&
+      message.content.some((part) =>
+        (part.type === "tool-call" || part.type === "tool-result") && part.toolCallId === "call-1"
+      )
+    )).toBe(true);
   });
 
   test("summary message is tagged with providerOptions", async () => {

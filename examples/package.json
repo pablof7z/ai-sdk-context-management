@@ -4,7 +4,8 @@
   "type": "module",
   "dependencies": {
     "ai": "^6.0.116",
-    "ai-sdk-context-management": "file:.."
+    "ai-sdk-context-management": "file:..",
+    "ollama-ai-provider-v2": "^3.4.0"
   },
   "devDependencies": {
     "tsx": "^4.0.0",

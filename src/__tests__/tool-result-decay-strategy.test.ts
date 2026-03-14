@@ -72,6 +72,24 @@ function getToolResultOutput(prompt: LanguageModelV3Prompt, toolCallId: string):
 }
 
 describe("ToolResultDecayStrategy", () => {
+  test("does nothing when maxPromptTokens is not exceeded", () => {
+    const prompt = makeToolPrompt(10);
+    const strategy = new ToolResultDecayStrategy({
+      maxPromptTokens: 10_000,
+      estimator: {
+        estimateMessage: () => 1,
+        estimatePrompt: () => 100,
+      },
+    });
+    const { state, capturedRemoved } = createMockState(prompt);
+    const originalCall0 = getToolResultOutput(prompt, "call-0");
+
+    strategy.apply(state);
+
+    expect(getToolResultOutput(state.prompt, "call-0")).toBe(originalCall0);
+    expect(capturedRemoved).toEqual([]);
+  });
+
   test("keeps recent tool results untouched (full zone)", () => {
     // 10 exchanges, keepFullResultCount=3 by default
     const prompt = makeToolPrompt(10);

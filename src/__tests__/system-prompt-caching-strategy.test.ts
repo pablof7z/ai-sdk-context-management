@@ -50,6 +50,30 @@ describe("SystemPromptCachingStrategy", () => {
     expect(state.prompt.map((m) => m.role)).toEqual(["system", "user"]);
   });
 
+  test("context-management system messages stay separate when consolidating", () => {
+    const strategy = new SystemPromptCachingStrategy();
+    const state = makeState([
+      { role: "system", content: "Base instruction." },
+      {
+        role: "system",
+        content: "summary text",
+        providerOptions: { contextManagement: { type: "summary" } },
+      },
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "system", content: "Secondary instruction." },
+    ]);
+
+    strategy.apply(state as any);
+
+    const systemMessages = state.prompt.filter((m) => m.role === "system");
+    expect(systemMessages).toHaveLength(2);
+    expect(systemMessages[0].content).toBe("Base instruction.\n\nSecondary instruction.");
+    expect(systemMessages[1].content).toBe("summary text");
+    expect(systemMessages[1].providerOptions).toEqual({
+      contextManagement: { type: "summary" },
+    });
+  });
+
   test("with consolidateSystemMessages=false, system messages stay separate but at front", () => {
     const strategy = new SystemPromptCachingStrategy({
       consolidateSystemMessages: false,

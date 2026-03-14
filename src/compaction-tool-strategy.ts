@@ -1,6 +1,10 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { clonePrompt, collectToolExchanges } from "./prompt-utils.js";
-import { createDefaultPromptTokenEstimator } from "./token-estimator.js";
+import {
+  clonePrompt,
+  collectToolExchanges,
+  isContextManagementSystemMessage,
+  partitionPromptForSummarization,
+} from "./prompt-utils.js";
 import { CONTEXT_MANAGEMENT_KEY } from "./types.js";
 import type {
   CompactionStore,
@@ -9,7 +13,6 @@ import type {
   ContextManagementRequestContext,
   ContextManagementStrategy,
   ContextManagementStrategyState,
-  PromptTokenEstimator,
   RemovedToolExchange,
 } from "./types.js";
 import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
@@ -53,36 +56,15 @@ function buildCompactionKey(context: ContextManagementRequestContext): Compactio
   };
 }
 
+function buildCompactionRequestKey(context: ContextManagementRequestContext): string {
+  return `${context.conversationId}:${context.agentId}`;
+}
+
 function buildSummarySystemMessage(summaryText: string): LanguageModelV3Message {
   return {
     role: "system",
     content: summaryText,
     providerOptions: { contextManagement: { type: "compaction-summary" } },
-  };
-}
-
-function splitPromptForSummarization(
-  prompt: LanguageModelV3Prompt,
-  keepLastMessages: number
-): { summarizable: LanguageModelV3Message[]; tail: LanguageModelV3Prompt } {
-  const systemMessages: LanguageModelV3Message[] = [];
-  const nonSystemMessages: LanguageModelV3Message[] = [];
-
-  for (const message of prompt) {
-    if (message.role === "system") {
-      systemMessages.push(message);
-    } else {
-      nonSystemMessages.push(message);
-    }
-  }
-
-  const tailCount = Math.min(keepLastMessages, nonSystemMessages.length);
-  const summarizable = nonSystemMessages.slice(0, nonSystemMessages.length - tailCount);
-  const keptTail = nonSystemMessages.slice(nonSystemMessages.length - tailCount);
-
-  return {
-    summarizable,
-    tail: [...systemMessages, ...keptTail],
   };
 }
 
@@ -109,20 +91,26 @@ function computeRemovedToolExchanges(
   return removed;
 }
 
+function isCompactionSummaryMessage(message: LanguageModelV3Message): boolean {
+  if (!isContextManagementSystemMessage(message)) {
+    return false;
+  }
+
+  return (message.providerOptions?.contextManagement as Record<string, unknown>).type === "compaction-summary";
+}
+
 export class CompactionToolStrategy implements ContextManagementStrategy {
   readonly name = "compaction-tool";
   private readonly summarize: (messages: LanguageModelV3Message[]) => Promise<string>;
   private readonly keepLastMessages: number;
   private readonly compactionStore?: CompactionStore;
-  private readonly estimator: PromptTokenEstimator;
   private readonly optionalTools: ToolSet;
-  private pendingCompaction = false;
+  private readonly pendingCompactionKeys = new Set<string>();
 
   constructor(options: CompactionToolStrategyOptions) {
     this.summarize = options.summarize;
     this.keepLastMessages = Math.max(0, Math.floor(options.keepLastMessages ?? DEFAULT_KEEP_LAST_MESSAGES));
     this.compactionStore = options.compactionStore;
-    this.estimator = options.estimator ?? createDefaultPromptTokenEstimator();
     this.optionalTools = {
       compact_context: tool<Record<string, never>, { ok: true; message: string }>({
         description: "Compact the conversation context by summarizing older messages. Call this when the context is getting large.",
@@ -132,8 +120,8 @@ export class CompactionToolStrategy implements ContextManagementStrategy {
           properties: {},
         }),
         execute: async (_input, options) => {
-          extractRequestContextFromExperimentalContext(options.experimental_context);
-          this.pendingCompaction = true;
+          const requestContext = extractRequestContextFromExperimentalContext(options.experimental_context);
+          this.pendingCompactionKeys.add(buildCompactionRequestKey(requestContext));
           return {
             ok: true,
             message: "Context will be compacted before the next model call.",
@@ -148,11 +136,17 @@ export class CompactionToolStrategy implements ContextManagementStrategy {
   }
 
   async apply(state: ContextManagementStrategyState): Promise<void> {
-    if (this.compactionStore && !this.pendingCompaction) {
+    const requestKey = buildCompactionRequestKey(state.requestContext);
+    const hasPendingCompaction = this.pendingCompactionKeys.has(requestKey);
+
+    if (this.compactionStore && !hasPendingCompaction) {
       const key = buildCompactionKey(state.requestContext);
       const storedSummary = await this.compactionStore.get(key);
 
-      if (storedSummary) {
+      if (
+        storedSummary &&
+        !state.prompt.some((message) => isCompactionSummaryMessage(message))
+      ) {
         const cloned = clonePrompt(state.prompt);
         const lastSystemIndex = cloned.reduce(
           (lastIndex, message, index) => (message.role === "system" ? index : lastIndex),
@@ -164,24 +158,40 @@ export class CompactionToolStrategy implements ContextManagementStrategy {
       }
     }
 
-    if (!this.pendingCompaction) {
+    if (!hasPendingCompaction) {
       return;
     }
 
-    this.pendingCompaction = false;
+    const {
+      systemMessages,
+      summarizableMessages,
+      preservedMessages,
+    } = partitionPromptForSummarization(
+      state.prompt,
+      this.keepLastMessages,
+      state.pinnedToolCallIds
+    );
 
-    const { summarizable, tail } = splitPromptForSummarization(state.prompt, this.keepLastMessages);
-
-    if (summarizable.length === 0) {
+    if (summarizableMessages.length === 0) {
+      this.pendingCompactionKeys.delete(requestKey);
       return;
     }
 
-    const summaryText = await this.summarize(summarizable);
+    const existingSummaryIndex = systemMessages.findIndex(isCompactionSummaryMessage);
+    const existingSummary = existingSummaryIndex === -1 ? null : systemMessages[existingSummaryIndex];
+    const messagesToSummarize = existingSummary
+      ? [existingSummary, ...summarizableMessages]
+      : summarizableMessages;
+
+    const summaryText = await this.summarize(messagesToSummarize);
     const summaryMessage = buildSummarySystemMessage(summaryText);
 
-    const systemMessages = tail.filter((message) => message.role === "system");
-    const nonSystemTail = tail.filter((message) => message.role !== "system");
-    const nextPrompt: LanguageModelV3Prompt = [...systemMessages, summaryMessage, ...nonSystemTail];
+    const nonSummarySystemMessages = systemMessages.filter((_, index) => index !== existingSummaryIndex);
+    const nextPrompt: LanguageModelV3Prompt = [
+      ...nonSummarySystemMessages,
+      summaryMessage,
+      ...preservedMessages,
+    ];
 
     const removedExchanges = computeRemovedToolExchanges(state.prompt, nextPrompt);
     state.addRemovedToolExchanges(removedExchanges);
@@ -192,5 +202,6 @@ export class CompactionToolStrategy implements ContextManagementStrategy {
     }
 
     state.updatePrompt(nextPrompt);
+    this.pendingCompactionKeys.delete(requestKey);
   }
 }

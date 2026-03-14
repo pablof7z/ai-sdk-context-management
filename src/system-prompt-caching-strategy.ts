@@ -1,4 +1,4 @@
-import { clonePrompt } from "./prompt-utils.js";
+import { clonePrompt, isContextManagementSystemMessage } from "./prompt-utils.js";
 import type {
   ContextManagementStrategy,
   ContextManagementStrategyState,
@@ -23,18 +23,21 @@ export class SystemPromptCachingStrategy implements ContextManagementStrategy {
       return;
     }
 
+    const taggedSystemMessages = systemMessages.filter((message) => isContextManagementSystemMessage(message));
+    const plainSystemMessages = systemMessages.filter((message) => !isContextManagementSystemMessage(message));
     let reorderedSystemMessages;
 
-    if (this.consolidateSystemMessages && systemMessages.length > 1) {
-      const consolidatedContent = systemMessages
+    if (this.consolidateSystemMessages && plainSystemMessages.length > 1) {
+      const consolidatedContent = plainSystemMessages
         .map((message) => message.content)
         .join("\n\n");
 
       reorderedSystemMessages = [
         { role: "system" as const, content: consolidatedContent },
+        ...taggedSystemMessages,
       ];
     } else {
-      reorderedSystemMessages = systemMessages;
+      reorderedSystemMessages = [...plainSystemMessages, ...taggedSystemMessages];
     }
 
     state.updatePrompt([...reorderedSystemMessages, ...nonSystemMessages]);

@@ -1,7 +1,6 @@
 import { jsonSchema, tool } from "ai";
 import { appendReminderToLatestUserMessage, removeToolExchanges, trimPromptToLastMessages, } from "./prompt-utils.js";
 import { CONTEXT_MANAGEMENT_KEY } from "./types.js";
-const DEFAULT_MAX_SCRATCHPAD_CHARS = 1_200;
 const DEFAULT_MAX_REMOVED_TOOL_REMINDER_ITEMS = 10;
 function dedupeStrings(values) {
     const seen = new Set();
@@ -29,15 +28,6 @@ function normalizeScratchpadState(state, agentLabel) {
         ...(typeof state?.updatedAt === "number" ? { updatedAt: state.updatedAt } : {}),
         ...(state?.agentLabel || agentLabel ? { agentLabel: state?.agentLabel ?? agentLabel } : {}),
     };
-}
-function truncateScratchpadNotes(notes, maxChars) {
-    if (notes.length <= maxChars) {
-        return notes;
-    }
-    if (maxChars <= 16) {
-        return notes.slice(0, maxChars);
-    }
-    return `${notes.slice(0, maxChars - 15).trimEnd()}\n...[truncated]`;
 }
 function buildScratchpadKey(context) {
     return {
@@ -71,11 +61,11 @@ function extractRequestContextFromExperimentalContext(experimentalContext) {
     };
 }
 function buildReminderBlock(options) {
-    const { currentState, currentContext, otherScratchpads, removedToolExchanges, maxScratchpadChars, maxRemovedToolReminderItems, } = options;
+    const { currentState, currentContext, otherScratchpads, removedToolExchanges, maxRemovedToolReminderItems, } = options;
     const lines = [
         "[Context management]",
         `Your scratchpad (${currentContext.agentLabel ?? currentContext.agentId}):`,
-        truncateScratchpadNotes(currentState.notes, maxScratchpadChars) || "(empty)",
+        currentState.notes || "(empty)",
     ];
     const otherAgentNotes = otherScratchpads
         .map((entry) => ({
@@ -86,7 +76,7 @@ function buildReminderBlock(options) {
     if (otherAgentNotes.length > 0) {
         lines.push("Other agent scratchpads:");
         for (const entry of otherAgentNotes) {
-            lines.push(`- ${entry.agentLabel}: ${truncateScratchpadNotes(entry.notes, maxScratchpadChars)}`);
+            lines.push(`- ${entry.agentLabel}: ${entry.notes}`);
         }
     }
     if (removedToolExchanges.length > 0) {
@@ -107,12 +97,10 @@ function buildReminderBlock(options) {
 export class ScratchpadStrategy {
     name = "scratchpad";
     scratchpadStore;
-    maxScratchpadChars;
     maxRemovedToolReminderItems;
     optionalTools;
     constructor(options) {
         this.scratchpadStore = options.scratchpadStore;
-        this.maxScratchpadChars = options.maxScratchpadChars ?? DEFAULT_MAX_SCRATCHPAD_CHARS;
         this.maxRemovedToolReminderItems =
             options.maxRemovedToolReminderItems ?? DEFAULT_MAX_REMOVED_TOOL_REMINDER_ITEMS;
         this.optionalTools = {
@@ -183,12 +171,15 @@ export class ScratchpadStrategy {
         const currentState = normalizeScratchpadState(currentStateRaw, state.requestContext.agentLabel);
         const allScratchpads = (allScratchpadsRaw ?? []).filter((entry) => entry.agentId !== state.requestContext.agentId);
         if (currentState.omitToolCallIds.length > 0) {
-            const omissionResult = removeToolExchanges(state.prompt, currentState.omitToolCallIds, "scratchpad");
+            const omitToolCallIds = currentState.omitToolCallIds.filter((toolCallId) => !state.pinnedToolCallIds.has(toolCallId));
+            const omissionResult = removeToolExchanges(state.prompt, omitToolCallIds, "scratchpad");
             state.updatePrompt(omissionResult.prompt);
             state.addRemovedToolExchanges(omissionResult.removedToolExchanges);
         }
         if (typeof currentState.keepLastMessages === "number") {
-            const trimResult = trimPromptToLastMessages(state.prompt, currentState.keepLastMessages, "scratchpad");
+            const trimResult = trimPromptToLastMessages(state.prompt, currentState.keepLastMessages, "scratchpad", {
+                pinnedToolCallIds: state.pinnedToolCallIds,
+            });
             state.updatePrompt(trimResult.prompt);
             state.addRemovedToolExchanges(trimResult.removedToolExchanges);
         }
@@ -197,7 +188,6 @@ export class ScratchpadStrategy {
             currentContext: state.requestContext,
             otherScratchpads: allScratchpads,
             removedToolExchanges: state.removedToolExchanges,
-            maxScratchpadChars: this.maxScratchpadChars,
             maxRemovedToolReminderItems: this.maxRemovedToolReminderItems,
         });
         state.updatePrompt(appendReminderToLatestUserMessage(state.prompt, reminderBlock));

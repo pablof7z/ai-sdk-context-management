@@ -1,4 +1,8 @@
-import { clonePrompt, collectToolExchanges } from "./prompt-utils.js";
+import {
+  buildPromptFromSelectedIndices,
+  collectToolExchanges,
+  getPinnedMessageIndices,
+} from "./prompt-utils.js";
 import type {
   ContextManagementStrategy,
   ContextManagementStrategyState,
@@ -108,14 +112,17 @@ export class HeadAndTailStrategy implements ContextManagementStrategy {
       return;
     }
 
-    // Build the set of message indices to drop
-    const dropIndices = new Set<number>();
-    for (let i = headEndNonSystem; i < tailStartNonSystem; i++) {
-      dropIndices.add(nonSystemIndices[i]);
+    const keptIndices = getPinnedMessageIndices(prompt, state.pinnedToolCallIds);
+
+    for (let i = 0; i < headEndNonSystem; i++) {
+      keptIndices.add(nonSystemIndices[i]);
     }
 
-    const cloned = clonePrompt(prompt);
-    const nextPrompt: LanguageModelV3Prompt = cloned.filter((_, index) => !dropIndices.has(index));
+    for (let i = tailStartNonSystem; i < nonSystemIndices.length; i++) {
+      keptIndices.add(nonSystemIndices[i]);
+    }
+
+    const nextPrompt: LanguageModelV3Prompt = buildPromptFromSelectedIndices(prompt, keptIndices);
 
     // Build removed tool exchanges
     const nextExchanges = collectToolExchanges(nextPrompt);

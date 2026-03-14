@@ -80,6 +80,12 @@ function isToolResultPart(part) {
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
+export function isContextManagementSystemMessage(message) {
+    if (message.role !== "system") {
+        return false;
+    }
+    return isRecord(message.providerOptions?.contextManagement);
+}
 function buildRemovedToolExchanges(originalPrompt, nextPrompt, reason) {
     const original = collectToolExchanges(originalPrompt);
     const next = collectToolExchanges(nextPrompt);
@@ -129,6 +135,30 @@ function computeTailStartIndex(prompt, keepLastMessages) {
 function buildPromptFromTail(prompt, startIndex) {
     const cloned = clonePrompt(prompt);
     return cloned.filter((message, index) => message.role === "system" || index >= startIndex);
+}
+export function getPinnedMessageIndices(prompt, pinnedToolCallIds) {
+    if (pinnedToolCallIds.size === 0) {
+        return new Set();
+    }
+    const exchanges = collectToolExchanges(prompt);
+    const pinnedMessageIndices = new Set();
+    for (const toolCallId of pinnedToolCallIds) {
+        const exchange = exchanges.get(toolCallId);
+        if (!exchange) {
+            continue;
+        }
+        if (exchange.callMessageIndex !== undefined) {
+            pinnedMessageIndices.add(exchange.callMessageIndex);
+        }
+        for (const index of exchange.resultMessageIndices) {
+            pinnedMessageIndices.add(index);
+        }
+    }
+    return pinnedMessageIndices;
+}
+export function buildPromptFromSelectedIndices(prompt, selectedIndices) {
+    const cloned = clonePrompt(prompt);
+    return cloned.filter((message, index) => message.role === "system" || selectedIndices.has(index));
 }
 export function clonePrompt(prompt) {
     return prompt.map((message) => cloneMessage(message));
@@ -236,6 +266,7 @@ export function trimPromptToLastMessages(prompt, keepLastMessages, reason, optio
     const nonSystemMessageCount = prompt.reduce((count, message) => count + (message.role === "system" ? 0 : 1), 0);
     const estimator = options?.estimator ?? createDefaultPromptTokenEstimator();
     const maxPromptTokens = options?.maxPromptTokens;
+    const pinnedMessageIndices = getPinnedMessageIndices(prompt, options?.pinnedToolCallIds ?? new Set());
     if (normalizedKeepLastMessages >= nonSystemMessageCount &&
         (maxPromptTokens === undefined || estimator.estimatePrompt(prompt) <= maxPromptTokens)) {
         return {
@@ -249,7 +280,15 @@ export function trimPromptToLastMessages(prompt, keepLastMessages, reason, optio
     };
     for (let keep = Math.min(normalizedKeepLastMessages, nonSystemMessageCount); keep >= 0; keep--) {
         const startIndex = computeTailStartIndex(prompt, keep);
-        const nextPrompt = buildPromptFromTail(prompt, startIndex);
+        const keptIndices = new Set(pinnedMessageIndices);
+        for (let index = startIndex; index < prompt.length; index++) {
+            if (prompt[index].role !== "system") {
+                keptIndices.add(index);
+            }
+        }
+        const nextPrompt = keptIndices.size === 0
+            ? buildPromptFromTail(prompt, prompt.length)
+            : buildPromptFromSelectedIndices(prompt, keptIndices);
         const result = {
             prompt: nextPrompt,
             removedToolExchanges: buildRemovedToolExchanges(prompt, nextPrompt, reason),
@@ -260,6 +299,37 @@ export function trimPromptToLastMessages(prompt, keepLastMessages, reason, optio
         }
     }
     return bestResult;
+}
+export function partitionPromptForSummarization(prompt, keepLastMessages, pinnedToolCallIds) {
+    const normalizedKeepLastMessages = Math.max(0, Math.floor(keepLastMessages));
+    const tailStartIndex = computeTailStartIndex(prompt, normalizedKeepLastMessages);
+    const pinnedMessageIndices = getPinnedMessageIndices(prompt, pinnedToolCallIds ?? new Set());
+    const preservedNonSystemIndices = new Set(pinnedMessageIndices);
+    for (let index = tailStartIndex; index < prompt.length; index++) {
+        if (prompt[index].role !== "system") {
+            preservedNonSystemIndices.add(index);
+        }
+    }
+    const cloned = clonePrompt(prompt);
+    const systemMessages = [];
+    const summarizableMessages = [];
+    const preservedMessages = [];
+    for (const [index, message] of cloned.entries()) {
+        if (message.role === "system") {
+            systemMessages.push(message);
+            continue;
+        }
+        if (preservedNonSystemIndices.has(index)) {
+            preservedMessages.push(message);
+            continue;
+        }
+        summarizableMessages.push(message);
+    }
+    return {
+        systemMessages,
+        summarizableMessages,
+        preservedMessages,
+    };
 }
 export function appendReminderToLatestUserMessage(prompt, reminderText) {
     const cloned = clonePrompt(prompt);

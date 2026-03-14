@@ -55,6 +55,7 @@ export interface ToolResultDecayStrategyOptions {
   keepFullResultCount?: number;
   truncatedMaxTokens?: number;
   truncateWindowCount?: number;
+  maxPromptTokens?: number;
   placeholder?: string | ((toolName: string, toolCallId: string) => string);
   estimator?: PromptTokenEstimator;
 }
@@ -142,7 +143,6 @@ export interface ScratchpadStore {
 
 export interface ScratchpadStrategyOptions {
   scratchpadStore: ScratchpadStore;
-  maxScratchpadChars?: number;
   maxRemovedToolReminderItems?: number;
 }
 

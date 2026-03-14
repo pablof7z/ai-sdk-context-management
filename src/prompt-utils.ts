@@ -111,6 +111,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+export function isContextManagementSystemMessage(message: LanguageModelV3Message): boolean {
+  if (message.role !== "system") {
+    return false;
+  }
+
+  return isRecord(message.providerOptions?.contextManagement);
+}
+
 function buildRemovedToolExchanges(
   originalPrompt: LanguageModelV3Prompt,
   nextPrompt: LanguageModelV3Prompt,
@@ -179,6 +187,44 @@ function computeTailStartIndex(prompt: LanguageModelV3Prompt, keepLastMessages: 
 function buildPromptFromTail(prompt: LanguageModelV3Prompt, startIndex: number): LanguageModelV3Prompt {
   const cloned = clonePrompt(prompt);
   return cloned.filter((message, index) => message.role === "system" || index >= startIndex);
+}
+
+export function getPinnedMessageIndices(
+  prompt: LanguageModelV3Prompt,
+  pinnedToolCallIds: ReadonlySet<string>
+): Set<number> {
+  if (pinnedToolCallIds.size === 0) {
+    return new Set<number>();
+  }
+
+  const exchanges = collectToolExchanges(prompt);
+  const pinnedMessageIndices = new Set<number>();
+
+  for (const toolCallId of pinnedToolCallIds) {
+    const exchange = exchanges.get(toolCallId);
+
+    if (!exchange) {
+      continue;
+    }
+
+    if (exchange.callMessageIndex !== undefined) {
+      pinnedMessageIndices.add(exchange.callMessageIndex);
+    }
+
+    for (const index of exchange.resultMessageIndices) {
+      pinnedMessageIndices.add(index);
+    }
+  }
+
+  return pinnedMessageIndices;
+}
+
+export function buildPromptFromSelectedIndices(
+  prompt: LanguageModelV3Prompt,
+  selectedIndices: ReadonlySet<number>
+): LanguageModelV3Prompt {
+  const cloned = clonePrompt(prompt);
+  return cloned.filter((message, index) => message.role === "system" || selectedIndices.has(index));
 }
 
 export function clonePrompt(prompt: LanguageModelV3Prompt): LanguageModelV3Prompt {
@@ -317,12 +363,14 @@ export function trimPromptToLastMessages(
   options?: {
     estimator?: PromptTokenEstimator;
     maxPromptTokens?: number;
+    pinnedToolCallIds?: ReadonlySet<string>;
   }
 ): { prompt: LanguageModelV3Prompt; removedToolExchanges: RemovedToolExchange[] } {
   const normalizedKeepLastMessages = Math.max(0, Math.floor(keepLastMessages));
   const nonSystemMessageCount = prompt.reduce((count, message) => count + (message.role === "system" ? 0 : 1), 0);
   const estimator = options?.estimator ?? createDefaultPromptTokenEstimator();
   const maxPromptTokens = options?.maxPromptTokens;
+  const pinnedMessageIndices = getPinnedMessageIndices(prompt, options?.pinnedToolCallIds ?? new Set<string>());
 
   if (
     normalizedKeepLastMessages >= nonSystemMessageCount &&
@@ -341,7 +389,17 @@ export function trimPromptToLastMessages(
 
   for (let keep = Math.min(normalizedKeepLastMessages, nonSystemMessageCount); keep >= 0; keep--) {
     const startIndex = computeTailStartIndex(prompt, keep);
-    const nextPrompt = buildPromptFromTail(prompt, startIndex);
+    const keptIndices = new Set<number>(pinnedMessageIndices);
+
+    for (let index = startIndex; index < prompt.length; index++) {
+      if (prompt[index].role !== "system") {
+        keptIndices.add(index);
+      }
+    }
+
+    const nextPrompt = keptIndices.size === 0
+      ? buildPromptFromTail(prompt, prompt.length)
+      : buildPromptFromSelectedIndices(prompt, keptIndices);
     const result = {
       prompt: nextPrompt,
       removedToolExchanges: buildRemovedToolExchanges(prompt, nextPrompt, reason),
@@ -355,6 +413,52 @@ export function trimPromptToLastMessages(
   }
 
   return bestResult;
+}
+
+export function partitionPromptForSummarization(
+  prompt: LanguageModelV3Prompt,
+  keepLastMessages: number,
+  pinnedToolCallIds?: ReadonlySet<string>
+): {
+  systemMessages: LanguageModelV3Message[];
+  summarizableMessages: LanguageModelV3Message[];
+  preservedMessages: LanguageModelV3Message[];
+} {
+  const normalizedKeepLastMessages = Math.max(0, Math.floor(keepLastMessages));
+  const tailStartIndex = computeTailStartIndex(prompt, normalizedKeepLastMessages);
+  const pinnedMessageIndices = getPinnedMessageIndices(prompt, pinnedToolCallIds ?? new Set<string>());
+  const preservedNonSystemIndices = new Set<number>(pinnedMessageIndices);
+
+  for (let index = tailStartIndex; index < prompt.length; index++) {
+    if (prompt[index].role !== "system") {
+      preservedNonSystemIndices.add(index);
+    }
+  }
+
+  const cloned = clonePrompt(prompt);
+  const systemMessages: LanguageModelV3Message[] = [];
+  const summarizableMessages: LanguageModelV3Message[] = [];
+  const preservedMessages: LanguageModelV3Message[] = [];
+
+  for (const [index, message] of cloned.entries()) {
+    if (message.role === "system") {
+      systemMessages.push(message);
+      continue;
+    }
+
+    if (preservedNonSystemIndices.has(index)) {
+      preservedMessages.push(message);
+      continue;
+    }
+
+    summarizableMessages.push(message);
+  }
+
+  return {
+    systemMessages,
+    summarizableMessages,
+    preservedMessages,
+  };
 }
 
 export function appendReminderToLatestUserMessage(

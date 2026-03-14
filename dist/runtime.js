@@ -3,6 +3,7 @@ class StrategyState {
     requestContext;
     currentParams;
     removedByToolCallId = new Map();
+    pinned = new Set();
     constructor(params, requestContext) {
         this.requestContext = requestContext;
         this.currentParams = {
@@ -19,6 +20,9 @@ class StrategyState {
     get removedToolExchanges() {
         return Array.from(this.removedByToolCallId.values());
     }
+    get pinnedToolCallIds() {
+        return this.pinned;
+    }
     updatePrompt(prompt) {
         this.currentParams = {
             ...this.currentParams,
@@ -28,6 +32,11 @@ class StrategyState {
     addRemovedToolExchanges(exchanges) {
         for (const exchange of exchanges) {
             this.removedByToolCallId.set(exchange.toolCallId, exchange);
+        }
+    }
+    addPinnedToolCallIds(toolCallIds) {
+        for (const id of toolCallIds) {
+            this.pinned.add(id);
         }
     }
 }

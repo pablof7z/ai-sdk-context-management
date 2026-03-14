@@ -28,6 +28,7 @@ export class SlidingWindowStrategy implements ContextManagementStrategy {
       {
         estimator: this.estimator,
         maxPromptTokens: this.maxPromptTokens,
+        pinnedToolCallIds: state.pinnedToolCallIds,
       }
     );
 

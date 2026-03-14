@@ -18,7 +18,6 @@ import type {
   ScratchpadToolResult,
 } from "./types.js";
 
-const DEFAULT_MAX_SCRATCHPAD_CHARS = 1_200;
 const DEFAULT_MAX_REMOVED_TOOL_REMINDER_ITEMS = 10;
 
 function dedupeStrings(values: readonly string[]): string[] {
@@ -56,18 +55,6 @@ function normalizeScratchpadState(
     ...(typeof state?.updatedAt === "number" ? { updatedAt: state.updatedAt } : {}),
     ...(state?.agentLabel || agentLabel ? { agentLabel: state?.agentLabel ?? agentLabel } : {}),
   };
-}
-
-function truncateScratchpadNotes(notes: string, maxChars: number): string {
-  if (notes.length <= maxChars) {
-    return notes;
-  }
-
-  if (maxChars <= 16) {
-    return notes.slice(0, maxChars);
-  }
-
-  return `${notes.slice(0, maxChars - 15).trimEnd()}\n...[truncated]`;
 }
 
 function buildScratchpadKey(context: ContextManagementRequestContext): ScratchpadStoreKey {
@@ -117,7 +104,6 @@ function buildReminderBlock(options: {
   currentContext: ContextManagementRequestContext;
   otherScratchpads: ScratchpadConversationEntry[];
   removedToolExchanges: readonly { toolCallId: string; toolName: string }[];
-  maxScratchpadChars: number;
   maxRemovedToolReminderItems: number;
 }): string {
   const {
@@ -125,14 +111,13 @@ function buildReminderBlock(options: {
     currentContext,
     otherScratchpads,
     removedToolExchanges,
-    maxScratchpadChars,
     maxRemovedToolReminderItems,
   } = options;
 
   const lines = [
     "[Context management]",
     `Your scratchpad (${currentContext.agentLabel ?? currentContext.agentId}):`,
-    truncateScratchpadNotes(currentState.notes, maxScratchpadChars) || "(empty)",
+    currentState.notes || "(empty)",
   ];
 
   const otherAgentNotes = otherScratchpads
@@ -145,7 +130,7 @@ function buildReminderBlock(options: {
   if (otherAgentNotes.length > 0) {
     lines.push("Other agent scratchpads:");
     for (const entry of otherAgentNotes) {
-      lines.push(`- ${entry.agentLabel}: ${truncateScratchpadNotes(entry.notes, maxScratchpadChars)}`);
+      lines.push(`- ${entry.agentLabel}: ${entry.notes}`);
     }
   }
 
@@ -170,13 +155,11 @@ function buildReminderBlock(options: {
 export class ScratchpadStrategy implements ContextManagementStrategy {
   readonly name = "scratchpad";
   private readonly scratchpadStore: ScratchpadStore;
-  private readonly maxScratchpadChars: number;
   private readonly maxRemovedToolReminderItems: number;
   private readonly optionalTools: ToolSet;
 
   constructor(options: ScratchpadStrategyOptions) {
     this.scratchpadStore = options.scratchpadStore;
-    this.maxScratchpadChars = options.maxScratchpadChars ?? DEFAULT_MAX_SCRATCHPAD_CHARS;
     this.maxRemovedToolReminderItems =
       options.maxRemovedToolReminderItems ?? DEFAULT_MAX_REMOVED_TOOL_REMINDER_ITEMS;
     this.optionalTools = {
@@ -258,9 +241,12 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
     );
 
     if (currentState.omitToolCallIds.length > 0) {
+      const omitToolCallIds = currentState.omitToolCallIds.filter(
+        (toolCallId) => !state.pinnedToolCallIds.has(toolCallId)
+      );
       const omissionResult = removeToolExchanges(
         state.prompt,
-        currentState.omitToolCallIds,
+        omitToolCallIds,
         "scratchpad"
       );
       state.updatePrompt(omissionResult.prompt);
@@ -271,7 +257,10 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
       const trimResult = trimPromptToLastMessages(
         state.prompt,
         currentState.keepLastMessages,
-        "scratchpad"
+        "scratchpad",
+        {
+          pinnedToolCallIds: state.pinnedToolCallIds,
+        }
       );
       state.updatePrompt(trimResult.prompt);
       state.addRemovedToolExchanges(trimResult.removedToolExchanges);
@@ -282,7 +271,6 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
       currentContext: state.requestContext,
       otherScratchpads: allScratchpads,
       removedToolExchanges: state.removedToolExchanges,
-      maxScratchpadChars: this.maxScratchpadChars,
       maxRemovedToolReminderItems: this.maxRemovedToolReminderItems,
     });
 

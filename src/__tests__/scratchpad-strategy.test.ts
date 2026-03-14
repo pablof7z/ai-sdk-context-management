@@ -85,6 +85,7 @@ describe("ScratchpadStrategy", () => {
         agentLabel: "Alpha",
       },
       prompt,
+      pinnedToolCallIds: new Set<string>(),
       removedToolExchanges: [] as any[],
       updatePrompt(nextPrompt: any) {
         this.prompt = nextPrompt;
@@ -92,6 +93,7 @@ describe("ScratchpadStrategy", () => {
       addRemovedToolExchanges(exchanges: any[]) {
         this.removedToolExchanges = [...this.removedToolExchanges, ...exchanges];
       },
+      addPinnedToolCallIds() {},
     };
 
     await strategy.apply(state as any);
@@ -142,6 +144,7 @@ describe("ScratchpadStrategy", () => {
         agentId: "agent-1",
       },
       prompt: alreadySmallPrompt,
+      pinnedToolCallIds: new Set<string>(),
       removedToolExchanges: [] as any[],
       updatePrompt(nextPrompt: any) {
         this.prompt = nextPrompt;
@@ -149,10 +152,56 @@ describe("ScratchpadStrategy", () => {
       addRemovedToolExchanges(exchanges: any[]) {
         this.removedToolExchanges = [...this.removedToolExchanges, ...exchanges];
       },
+      addPinnedToolCallIds() {},
     };
 
     await strategy.apply(state as any);
 
     expect(state.prompt.filter((message: any) => message.role !== "system")).toHaveLength(2);
+  });
+
+  test("pinned tool exchanges are preserved against scratchpad omission and trimming", async () => {
+    const store = new InMemoryScratchpadStore();
+    await store.set(
+      { conversationId: "conv-1", agentId: "agent-1" },
+      {
+        notes: "",
+        keepLastMessages: 0,
+        omitToolCallIds: ["call-old"],
+      }
+    );
+
+    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+    const pinnedToolCallIds = new Set<string>(["call-old"]);
+    const state = {
+      requestContext: {
+        conversationId: "conv-1",
+        agentId: "agent-1",
+      },
+      prompt: makePrompt(),
+      pinnedToolCallIds,
+      removedToolExchanges: [] as any[],
+      updatePrompt(nextPrompt: any) {
+        this.prompt = nextPrompt;
+      },
+      addRemovedToolExchanges(exchanges: any[]) {
+        this.removedToolExchanges = [...this.removedToolExchanges, ...exchanges];
+      },
+      addPinnedToolCallIds(ids: string[]) {
+        for (const id of ids) {
+          pinnedToolCallIds.add(id);
+        }
+      },
+    };
+
+    await strategy.apply(state as any);
+
+    expect(
+      state.prompt.some((message: any) =>
+        message.content?.some?.((part: any) =>
+          (part.type === "tool-call" || part.type === "tool-result") && part.toolCallId === "call-old"
+        )
+      )
+    ).toBe(true);
   });
 });

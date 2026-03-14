@@ -18,6 +18,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
   private readonly keepFullResultCount: number;
   private readonly truncatedMaxTokens: number;
   private readonly truncateWindowCount: number;
+  private readonly maxPromptTokens?: number;
   private readonly placeholder: string | ((toolName: string, toolCallId: string) => string);
   private readonly estimator;
 
@@ -25,11 +26,19 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     this.keepFullResultCount = Math.max(0, Math.floor(options.keepFullResultCount ?? DEFAULT_KEEP_FULL_RESULT_COUNT));
     this.truncatedMaxTokens = Math.max(0, Math.floor(options.truncatedMaxTokens ?? DEFAULT_TRUNCATED_MAX_TOKENS));
     this.truncateWindowCount = Math.max(0, Math.floor(options.truncateWindowCount ?? DEFAULT_TRUNCATE_WINDOW_COUNT));
+    this.maxPromptTokens = options.maxPromptTokens;
     this.placeholder = options.placeholder ?? DEFAULT_PLACEHOLDER;
     this.estimator = options.estimator ?? createDefaultPromptTokenEstimator();
   }
 
   apply(state: ContextManagementStrategyState): void {
+    if (
+      this.maxPromptTokens !== undefined &&
+      this.estimator.estimatePrompt(state.prompt) <= this.maxPromptTokens
+    ) {
+      return;
+    }
+
     const exchanges = collectToolExchanges(state.prompt);
 
     if (exchanges.size === 0) {

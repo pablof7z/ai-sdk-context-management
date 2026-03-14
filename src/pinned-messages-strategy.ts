@@ -78,7 +78,7 @@ export class PinnedMessagesStrategy implements ContextManagementStrategy {
         execute: async (input: { pin?: string[]; unpin?: string[] }, options) => {
           const requestContext = extractRequestContextFromExperimentalContext(options.experimental_context);
           const key = buildPinnedKey(requestContext);
-          const current = await this.pinnedStore.get(key);
+          const current = (await this.pinnedStore.get(key)) ?? [];
 
           const unpinSet = new Set(input.unpin ?? []);
           const filtered = current.filter((id) => !unpinSet.has(id));
@@ -105,7 +105,7 @@ export class PinnedMessagesStrategy implements ContextManagementStrategy {
 
   async apply(state: ContextManagementStrategyState): Promise<void> {
     const key = buildPinnedKey(state.requestContext);
-    const pinnedIds = await this.pinnedStore.get(key);
+    const pinnedIds = (await this.pinnedStore.get(key)) ?? [];
 
     if (pinnedIds.length > 0) {
       state.addPinnedToolCallIds(pinnedIds);

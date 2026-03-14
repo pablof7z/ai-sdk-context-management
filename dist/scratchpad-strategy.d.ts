@@ -3,7 +3,6 @@ import type { ContextManagementStrategy, ContextManagementStrategyState, Scratch
 export declare class ScratchpadStrategy implements ContextManagementStrategy {
     readonly name = "scratchpad";
     private readonly scratchpadStore;
-    private readonly maxScratchpadChars;
     private readonly maxRemovedToolReminderItems;
     private readonly optionalTools;
     constructor(options: ScratchpadStrategyOptions);

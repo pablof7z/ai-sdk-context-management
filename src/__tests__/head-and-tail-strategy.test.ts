@@ -2,16 +2,23 @@ import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
 import { HeadAndTailStrategy } from "../head-and-tail-strategy.js";
 import type { RemovedToolExchange } from "../types.js";
 
-function makeState(prompt: LanguageModelV3Prompt) {
+function makeState(prompt: LanguageModelV3Prompt, pinnedIds: string[] = []) {
   const captured: RemovedToolExchange[] = [];
+  const pinnedToolCallIds = new Set(pinnedIds);
   const state = {
     prompt,
+    pinnedToolCallIds,
     removedToolExchanges: [] as readonly RemovedToolExchange[],
     updatePrompt(p: LanguageModelV3Prompt) {
       this.prompt = p;
     },
     addRemovedToolExchanges(exchanges: RemovedToolExchange[]) {
       captured.push(...exchanges);
+    },
+    addPinnedToolCallIds(ids: string[]) {
+      for (const id of ids) {
+        pinnedToolCallIds.add(id);
+      }
     },
   };
   return { state: state as any, captured };
@@ -220,6 +227,19 @@ describe("HeadAndTailStrategy", () => {
     // call-tail is in the tail and should NOT be removed
     const tailExchange = captured.find((e) => e.toolCallId === "call-tail");
     expect(tailExchange).toBeUndefined();
+  });
+
+  test("pinned exchanges stay in the prompt even when they fall in the dropped middle", () => {
+    const strategy = new HeadAndTailStrategy({ headCount: 2, tailCount: 4 });
+    const prompt = makeLargePrompt();
+    const { state, captured } = makeState(prompt, ["call-mid"]);
+
+    strategy.apply(state);
+
+    const texts = state.prompt.map(textOf);
+    expect(texts).toContain("tool-call:call-mid");
+    expect(texts).toContain("tool-result:call-mid");
+    expect(captured.find((exchange) => exchange.toolCallId === "call-mid")).toBeUndefined();
   });
 
   test("no-op when messages fit within headCount + tailCount", () => {

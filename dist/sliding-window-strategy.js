@@ -15,6 +15,7 @@ export class SlidingWindowStrategy {
         const result = trimPromptToLastMessages(state.prompt, this.keepLastMessages, "sliding-window", {
             estimator: this.estimator,
             maxPromptTokens: this.maxPromptTokens,
+            pinnedToolCallIds: state.pinnedToolCallIds,
         });
         state.updatePrompt(result.prompt);
         state.addRemovedToolExchanges(result.removedToolExchanges);

@@ -1,11 +1,14 @@
-import type { LanguageModelV3CallOptions, LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { LanguageModelV3CallOptions, LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
 import type { ContextManagementRequestContext, PromptTokenEstimator, RemovedToolExchange } from "./types.js";
-interface ToolExchange {
+export interface ToolExchange {
     toolCallId: string;
     toolName: string;
     callMessageIndex?: number;
     resultMessageIndices: number[];
 }
+export declare function isContextManagementSystemMessage(message: LanguageModelV3Message): boolean;
+export declare function getPinnedMessageIndices(prompt: LanguageModelV3Prompt, pinnedToolCallIds: ReadonlySet<string>): Set<number>;
+export declare function buildPromptFromSelectedIndices(prompt: LanguageModelV3Prompt, selectedIndices: ReadonlySet<number>): LanguageModelV3Prompt;
 export declare function clonePrompt(prompt: LanguageModelV3Prompt): LanguageModelV3Prompt;
 export declare function extractRequestContext(params: Pick<LanguageModelV3CallOptions, "providerOptions">): ContextManagementRequestContext | null;
 export declare function collectToolExchanges(prompt: LanguageModelV3Prompt): Map<string, ToolExchange>;
@@ -16,9 +19,14 @@ export declare function removeToolExchanges(prompt: LanguageModelV3Prompt, toolC
 export declare function trimPromptToLastMessages(prompt: LanguageModelV3Prompt, keepLastMessages: number, reason: string, options?: {
     estimator?: PromptTokenEstimator;
     maxPromptTokens?: number;
+    pinnedToolCallIds?: ReadonlySet<string>;
 }): {
     prompt: LanguageModelV3Prompt;
     removedToolExchanges: RemovedToolExchange[];
 };
+export declare function partitionPromptForSummarization(prompt: LanguageModelV3Prompt, keepLastMessages: number, pinnedToolCallIds?: ReadonlySet<string>): {
+    systemMessages: LanguageModelV3Message[];
+    summarizableMessages: LanguageModelV3Message[];
+    preservedMessages: LanguageModelV3Message[];
+};
 export declare function appendReminderToLatestUserMessage(prompt: LanguageModelV3Prompt, reminderText: string): LanguageModelV3Prompt;
-export {};
