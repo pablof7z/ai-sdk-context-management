@@ -14,7 +14,9 @@
   "files": [
     "dist",
     "docs",
-    "examples",
+    "examples/*.ts",
+    "examples/README.md",
+    "examples/tsconfig.json",
     "README.md",
     "LICENSE"
   ],
