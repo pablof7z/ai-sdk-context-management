@@ -1,0 +1,76 @@
+/**
+ * Context Utilization Reminder — tell the agent when to clean up context
+ */
+import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
+import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
+import {
+  ContextUtilizationReminderStrategy,
+  createContextManagementRuntime,
+} from "ai-sdk-context-management";
+import {
+  DEMO_CONTEXT,
+  createMockTextModel,
+  createPromptCaptureMiddleware,
+  printPrompt,
+} from "./helpers.js";
+
+function getUserText(message: LanguageModelV3Message): string {
+  if (message.role === "system") {
+    return message.content;
+  }
+
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+
+  return message.content
+    .map((part) => ("text" in part ? part.text : ""))
+    .join("");
+}
+
+async function main() {
+  const runtime = createContextManagementRuntime({
+    strategies: [
+      new ContextUtilizationReminderStrategy({
+        workingTokenBudget: 40,
+        warningThresholdRatio: 0.5,
+        mode: "generic",
+      }),
+    ],
+  });
+
+  const capturedPrompts: LanguageModelV3Prompt[] = [];
+  const model = wrapLanguageModel({
+    model: wrapLanguageModel({
+      model: createMockTextModel("I should summarize stale context before continuing."),
+      middleware: createPromptCaptureMiddleware(capturedPrompts),
+    }),
+    middleware: runtime.middleware,
+  });
+
+  const messages: ModelMessage[] = [
+    { role: "system", content: "You are a planning agent." },
+    {
+      role: "user",
+      content:
+        "We have reviewed the config, test setup, deployment script, rollback plan, parser edge cases, and the production checklist. What should happen next?",
+    },
+  ];
+
+  const result = await generateText({
+    model,
+    messages,
+    providerOptions: DEMO_CONTEXT,
+  });
+
+  printPrompt("Prompt after ContextUtilizationReminderStrategy", capturedPrompts[0]);
+  console.log("\nLatest user message after reminder injection:");
+  console.log(getUserText(capturedPrompts[0][capturedPrompts[0].length - 1]));
+  console.log("\nWhat changed:");
+  console.log("- the agent received an explicit utilization warning");
+  console.log("- no history was removed yet");
+  console.log("- this is a nudge to summarize or compact before the next expensive turn");
+  console.log(`\nModel output: ${result.text}`);
+}
+
+main().catch(console.error);

@@ -1,10 +1,10 @@
 /**
- * Sliding Window — keep the recent tail, drop older turns
+ * System Prompt Caching — consolidate and stabilize the prompt prefix
  */
 import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
 import {
-  SlidingWindowStrategy,
+  SystemPromptCachingStrategy,
   createContextManagementRuntime,
 } from "ai-sdk-context-management";
 import {
@@ -16,27 +16,24 @@ import {
 
 async function main() {
   const runtime = createContextManagementRuntime({
-    strategies: [new SlidingWindowStrategy({ keepLastMessages: 4 })],
+    strategies: [new SystemPromptCachingStrategy()],
   });
 
   const capturedPrompts: LanguageModelV3Prompt[] = [];
   const model = wrapLanguageModel({
     model: wrapLanguageModel({
-      model: createMockTextModel("Only Germany and Italy are still visible."),
+      model: createMockTextModel("The prompt prefix is now stable."),
       middleware: createPromptCaptureMiddleware(capturedPrompts),
     }),
     middleware: runtime.middleware,
   });
 
   const messages: ModelMessage[] = [
-    { role: "system", content: "You are a helpful geography assistant." },
-    { role: "user", content: "What is the capital of France?" },
-    { role: "assistant", content: "Paris." },
-    { role: "user", content: "What about Germany?" },
-    { role: "assistant", content: "Berlin." },
-    { role: "user", content: "And Italy?" },
-    { role: "assistant", content: "Rome." },
-    { role: "user", content: "List every capital I asked about." },
+    { role: "user", content: "Can you review the parser changes?" },
+    { role: "system", content: "You are a careful code reviewer." },
+    { role: "assistant", content: "Yes." },
+    { role: "system", content: "Prefer concise findings with concrete file references." },
+    { role: "user", content: "Start with parser.ts." },
   ];
 
   const result = await generateText({
@@ -45,10 +42,11 @@ async function main() {
     providerOptions: DEMO_CONTEXT,
   });
 
-  printPrompt("Prompt after SlidingWindowStrategy", capturedPrompts[0]);
+  printPrompt("Prompt after SystemPromptCachingStrategy", capturedPrompts[0]);
   console.log("\nWhat changed:");
-  console.log("- only the last 4 non-system messages survive");
-  console.log("- the France exchange is gone before the model answers");
+  console.log("- both system messages moved to the front");
+  console.log("- the plain system messages were merged into one stable prefix");
+  console.log("- non-system message order stayed intact");
   console.log(`\nModel output: ${result.text}`);
 }
 

@@ -1,128 +1,79 @@
 /**
- * Summarization — Auto-summarize older messages when context grows too large
- *
- * A science tutor conversation that grows past a token budget. The strategy
- * calls a summarize function (powered by Ollama itself) to compress older
- * exchanges into a summary message, keeping recent turns verbatim.
- *
- * This is the BYOLLM pattern: your own model handles both conversation
- * and summarization — no external API needed.
- *
- * Requires: ollama running locally with qwen2.5:3b pulled
+ * Summarization — replace older history with a deterministic summary block
  */
 import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Message, LanguageModelV3Middleware, LanguageModelV3Prompt } from "@ai-sdk/provider";
-import { ollama } from "ollama-ai-provider-v2";
-import { createContextManagementRuntime, SummarizationStrategy } from "ai-sdk-context-management";
-import { printPrompt } from "./helpers.js";
+import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
+import {
+  SummarizationStrategy,
+  createContextManagementRuntime,
+} from "ai-sdk-context-management";
+import {
+  DEMO_CONTEXT,
+  createMockTextModel,
+  createPromptCaptureMiddleware,
+  printPrompt,
+} from "./helpers.js";
 
-const CONTEXT_OPTIONS = {
-  contextManagement: { conversationId: "demo", agentId: "demo" },
-};
-
-function extractText(message: LanguageModelV3Message): string {
-  if (message.role === "system") return message.content;
-  return message.content
-    .map((p) => (p.type === "text" ? p.text : ""))
-    .filter(Boolean)
-    .join("");
-}
-
-async function summarizeWithOllama(messages: LanguageModelV3Message[]): Promise<string> {
-  const transcript = messages
-    .map((m) => {
-      if (m.role === "system" && (m.providerOptions?.contextManagement as Record<string, unknown>)?.type === "summary") {
-        return `[Previous Summary]: ${m.content}`;
+function summarize(messages: LanguageModelV3Message[]): Promise<string> {
+  const topics = messages
+    .map((message) => {
+      if (message.role === "system") {
+        return null;
       }
-      return `${m.role}: ${extractText(m)}`;
+
+      return message.content
+        .map((part) => (part.type === "text" ? part.text : null))
+        .filter((part): part is string => typeof part === "string")
+        .join(" ");
     })
-    .filter(Boolean)
-    .join("\n");
+    .filter((text): text is string => typeof text === "string" && text.length > 0)
+    .slice(0, 3)
+    .join(" | ");
 
-  console.log("  [summarizer] Summarizing", messages.length, "messages with Ollama...");
-
-  const result = await generateText({
-    model: ollama("qwen2.5:3b"),
-    messages: [
-      {
-        role: "system",
-        content: "Summarize the following conversation in 2-3 sentences. Preserve all key facts, conclusions, and any specific details the user asked about.",
-      },
-      { role: "user", content: transcript },
-    ],
-  });
-
-  console.log("  [summarizer] Summary:", result.text.slice(0, 100) + "...");
-  return result.text;
+  return Promise.resolve(`Summary of older context: ${topics}`);
 }
 
 async function main() {
   const runtime = createContextManagementRuntime({
     strategies: [
       new SummarizationStrategy({
-        summarize: summarizeWithOllama,
-        maxPromptTokens: 300,
+        summarize,
+        maxPromptTokens: 80,
         keepLastMessages: 2,
       }),
     ],
   });
 
-  // Capture transformed prompt
   const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const logging: LanguageModelV3Middleware = {
-    specificationVersion: "v3",
-    transformParams: async ({ params }) => {
-      capturedPrompts.push([...params.prompt]);
-      return params;
-    },
-  };
-
-  const base = ollama("qwen2.5:3b");
-  const logged = wrapLanguageModel({ model: base, middleware: logging });
-  const model = wrapLanguageModel({ model: logged, middleware: runtime.middleware });
+  const model = wrapLanguageModel({
+    model: wrapLanguageModel({
+      model: createMockTextModel("The summary preserved the older science facts."),
+      middleware: createPromptCaptureMiddleware(capturedPrompts),
+    }),
+    middleware: runtime.middleware,
+  });
 
   const messages: ModelMessage[] = [
-    { role: "system", content: "You are a science tutor. Give concise but informative explanations." },
+    { role: "system", content: "You are a science tutor." },
+    { role: "user", content: "What is photosynthesis?" },
+    { role: "assistant", content: "Plants convert light, water, and carbon dioxide into sugars and oxygen." },
+    { role: "user", content: "How does cellular respiration relate to it?" },
+    { role: "assistant", content: "Cells break down sugars to release stored energy." },
+    { role: "user", content: "Explain the overall energy cycle." },
   ];
 
-  const turns = [
-    "What is photosynthesis?",
-    "How does cellular respiration relate to it?",
-    "What role do mitochondria play in energy production?",
-    "Based on everything we discussed, explain the full energy cycle in a cell.",
-  ];
+  const result = await generateText({
+    model,
+    messages,
+    providerOptions: DEMO_CONTEXT,
+  });
 
-  for (const question of turns) {
-    messages.push({ role: "user", content: question });
-
-    console.log(`\n> User: ${question}`);
-
-    const promptIndex = capturedPrompts.length;
-    const result = await generateText({
-      model,
-      messages,
-      providerOptions: CONTEXT_OPTIONS,
-    });
-
-    messages.push({ role: "assistant", content: result.text });
-    console.log(`< Assistant: ${result.text.slice(0, 200)}${result.text.length > 200 ? "..." : ""}`);
-
-    const actualPrompt = capturedPrompts[promptIndex];
-    const hasSummary = actualPrompt.some(
-      (m) => m.role === "system" && (m.providerOptions?.contextManagement as Record<string, unknown>)?.type === "summary"
-    );
-
-    console.log(`  [${actualPrompt.length} messages sent to model${hasSummary ? ", includes summary" : ""}]`);
-  }
-
-  // Show the final prompt structure
-  const lastPrompt = capturedPrompts[capturedPrompts.length - 1];
-  printPrompt("\nFinal turn — prompt structure", lastPrompt);
-
-  console.log("\n---");
-  console.log("When the conversation exceeds maxPromptTokens=300, older exchanges");
-  console.log("are replaced with an Ollama-generated summary. The model can still");
-  console.log("answer questions about earlier topics because the summary preserves key facts.");
+  printPrompt("Prompt after SummarizationStrategy", capturedPrompts[0]);
+  console.log("\nWhat changed:");
+  console.log("- older turns were replaced by a tagged system summary");
+  console.log("- only the newest tail stays verbatim");
+  console.log("- the agent can still refer to the old discussion, but through compressed facts");
+  console.log(`\nModel output: ${result.text}`);
 }
 
 main().catch(console.error);
