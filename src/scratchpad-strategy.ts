@@ -249,7 +249,6 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
 
           return {
             ok: true,
-            state: nextState,
           };
         },
       }),

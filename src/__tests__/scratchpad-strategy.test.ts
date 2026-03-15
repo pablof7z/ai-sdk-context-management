@@ -33,12 +33,6 @@ describe("ScratchpadStrategy", () => {
 
     expect(result).toEqual({
       ok: true,
-      state: expect.objectContaining({
-        notes: "Focus on parser cleanup",
-        keepLastMessages: 3,
-        omitToolCallIds: ["call-1"],
-        agentLabel: "Alpha",
-      }),
     });
     expect(await store.get({ conversationId: "conv-1", agentId: "agent-1" })).toEqual(
       expect.objectContaining({

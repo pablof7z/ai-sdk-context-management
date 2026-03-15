@@ -319,5 +319,4 @@ export interface ScratchpadToolInput {
 
 export interface ScratchpadToolResult {
   ok: true;
-  state: ScratchpadState;
 }

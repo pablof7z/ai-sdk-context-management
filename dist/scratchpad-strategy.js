@@ -180,7 +180,6 @@ export class ScratchpadStrategy {
                     await this.scratchpadStore.set(key, nextState);
                     return {
                         ok: true,
-                        state: nextState,
                     };
                 },
             }),

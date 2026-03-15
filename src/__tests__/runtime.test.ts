@@ -121,9 +121,6 @@ describe("createContextManagementRuntime", () => {
       });
       expect(completeEvent.payloads.result).toEqual({
         ok: true,
-        state: expect.objectContaining({
-          notes: "Track parser cleanup",
-        }),
       });
     }
   });
