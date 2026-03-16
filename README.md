@@ -180,7 +180,7 @@ The runtime can emit raw events for every request:
 - `tool-execute-error`
 - `runtime-complete`
 
-These events include request context, before/after token estimates, removed-tool deltas, pinned-tool deltas, and prompt snapshots.
+These events include request context, before/after token estimates, removed-tool deltas, pinned-tool deltas, and the final provider-facing prompt snapshot after middleware runs. The `runtime-complete` event also includes the final `providerOptions` and `toolChoice`.
 
 ## Utilities
 

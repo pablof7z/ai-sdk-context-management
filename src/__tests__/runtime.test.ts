@@ -88,6 +88,106 @@ describe("createContextManagementRuntime", () => {
     if (completeEvent.type === "runtime-complete") {
       expect(completeEvent.messageCountBefore).toBe(prompt.length);
       expect(completeEvent.messageCountAfter).toBeLessThan(prompt.length);
+      expect(completeEvent.payloads.prompt.map((message) => message.role)).toEqual([
+        "system",
+        "assistant",
+        "tool",
+        "user",
+      ]);
+      expect(completeEvent.payloads.providerOptions).toEqual({
+        contextManagement: {
+          conversationId: "conv-1",
+          agentId: "agent-1",
+        },
+      });
+      expect(completeEvent.payloads.toolChoice).toBeUndefined();
+    }
+  });
+
+  test("runtime-complete telemetry captures final prompt and call parameters", async () => {
+    const events: ContextManagementTelemetryEvent[] = [];
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        {
+          name: "custom-final-params",
+          apply(state) {
+            state.updatePrompt([
+              {
+                role: "system",
+                content: "rewritten system",
+              },
+              {
+                role: "user",
+                content: [{ type: "text", text: "rewritten user" }],
+              },
+            ]);
+            state.updateParams({
+              providerOptions: {
+                ...state.params.providerOptions,
+                custom: {
+                  debug: true,
+                },
+              },
+              toolChoice: {
+                type: "tool",
+                toolName: "scratchpad",
+              } as any,
+            });
+          },
+        },
+      ],
+      telemetry: async (event) => {
+        events.push(event);
+      },
+    });
+
+    await runtime.middleware.transformParams?.({
+      params: {
+        prompt: makePrompt(),
+        providerOptions: {
+          contextManagement: {
+            conversationId: "conv-1",
+            agentId: "agent-1",
+          },
+        },
+      },
+      model: {
+        specificationVersion: "v3",
+        provider: "mock",
+        modelId: "mock",
+        supportedUrls: {},
+        doGenerate: async () => { throw new Error("unused"); },
+        doStream: async () => { throw new Error("unused"); },
+      },
+    } as any);
+
+    const completeEvent = events.find((event) => event.type === "runtime-complete");
+    expect(completeEvent?.type).toBe("runtime-complete");
+
+    if (completeEvent?.type === "runtime-complete") {
+      expect(completeEvent.payloads.prompt).toEqual([
+        {
+          role: "system",
+          content: "rewritten system",
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "rewritten user" }],
+        },
+      ]);
+      expect(completeEvent.payloads.providerOptions).toEqual({
+        contextManagement: {
+          conversationId: "conv-1",
+          agentId: "agent-1",
+        },
+        custom: {
+          debug: true,
+        },
+      });
+      expect(completeEvent.payloads.toolChoice).toEqual({
+        type: "tool",
+        toolName: "scratchpad",
+      });
     }
   });
 

@@ -118,6 +118,11 @@ export interface ContextManagementRuntimeCompleteEvent {
     pinnedToolCallIdsTotal: number;
     messageCountBefore: number;
     messageCountAfter: number;
+    payloads: {
+        prompt: LanguageModelV3Prompt;
+        providerOptions: LanguageModelV3CallOptions["providerOptions"];
+        toolChoice?: LanguageModelV3CallOptions["toolChoice"];
+    };
 }
 export type ContextManagementTelemetryEvent = ContextManagementRuntimeStartEvent | ContextManagementStrategyCompleteEvent | ContextManagementToolExecuteStartEvent | ContextManagementToolExecuteCompleteEvent | ContextManagementToolExecuteErrorEvent | ContextManagementRuntimeCompleteEvent;
 export type ContextManagementTelemetrySink = (event: ContextManagementTelemetryEvent) => Promise<void> | void;

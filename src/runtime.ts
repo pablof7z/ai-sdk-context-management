@@ -335,6 +335,13 @@ export function createContextManagementRuntime(
         pinnedToolCallIdsTotal: state.pinnedToolCallIds.size,
         messageCountBefore: initialMessageCount,
         messageCountAfter: countMessages(state.prompt),
+        payloads: {
+          prompt: clonePrompt(state.prompt),
+          providerOptions: cloneUnknown(state.params.providerOptions),
+          ...(state.params.toolChoice !== undefined
+            ? { toolChoice: cloneUnknown(state.params.toolChoice) }
+            : {}),
+        },
       }));
 
       return state.params;
