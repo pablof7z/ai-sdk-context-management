@@ -103,7 +103,9 @@ describe("createContextManagementRuntime", () => {
 
     await runtime.optionalTools.scratchpad.execute?.(
       {
-        notes: "Track parser cleanup",
+        setEntries: {
+          notes: "Track parser cleanup",
+        },
       },
       {
         toolCallId: "scratchpad-call-1",

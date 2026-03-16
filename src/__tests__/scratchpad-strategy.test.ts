@@ -100,7 +100,9 @@ describe("ScratchpadStrategy", () => {
 
     const result = await scratchpadTool.execute?.(
       {
-        notes: "Focus on parser cleanup",
+        setEntries: {
+          notes: "Focus on parser cleanup",
+        },
         keepLastMessages: 3,
         omitToolCallIds: ["call-1"],
       },
@@ -124,7 +126,9 @@ describe("ScratchpadStrategy", () => {
     );
     expect(await store.get({ conversationId: "conv-1", agentId: "agent-1" })).toEqual(
       expect.objectContaining({
-        notes: "Focus on parser cleanup",
+        entries: {
+          notes: "Focus on parser cleanup",
+        },
         keepLastMessages: 3,
         omitToolCallIds: ["call-1"],
       })
@@ -132,16 +136,16 @@ describe("ScratchpadStrategy", () => {
     expect(await store.get({ conversationId: "conv-1", agentId: "agent-2" })).toBeUndefined();
   });
 
-  test("scratchpad tool supports key/value entries and note edit operations", async () => {
+  test("scratchpad tool supports key/value entry updates without special note handling", async () => {
     const store = new InMemoryScratchpadStore();
     await store.set(
       { conversationId: "conv-1", agentId: "agent-1" },
       {
         entries: {
+          notes: "Existing notes rewritten by the model",
           objective: "Inspect the parser flow",
           stale: "remove me",
         },
-        notes: "Existing notes",
         omitToolCallIds: [],
       }
     );
@@ -151,9 +155,9 @@ describe("ScratchpadStrategy", () => {
 
     const result = await scratchpadTool.execute?.(
       {
-        appendNotes: "Fresh follow-up",
         setEntries: {
           findings: "Tool ordering still looks correct",
+          notes: "Fresh follow-up",
         },
         removeEntryKeys: ["stale"],
       },
@@ -175,9 +179,9 @@ describe("ScratchpadStrategy", () => {
       expect.objectContaining({
         entries: {
           findings: "Tool ordering still looks correct",
+          notes: "Fresh follow-up",
           objective: "Inspect the parser flow",
         },
-        notes: "Existing notes\n\nFresh follow-up",
       })
     );
   });
@@ -188,9 +192,9 @@ describe("ScratchpadStrategy", () => {
       { conversationId: "conv-1", agentId: "agent-1" },
       {
         entries: {
+          notes: "Parser follow-up is still open.",
           objective: "Keep the working set tight.",
         },
-        notes: "Parser follow-up is still open.",
         omitToolCallIds: ["call-old", "call-older"],
       }
     );
@@ -200,7 +204,6 @@ describe("ScratchpadStrategy", () => {
         entries: {
           findings: "I already inspected the CLI wiring.",
         },
-        notes: "",
         omitToolCallIds: [],
         agentLabel: "Beta",
       }
@@ -244,8 +247,7 @@ describe("ScratchpadStrategy", () => {
 
     expect(reminderText).toContain("Your scratchpad (Alpha)");
     expect(reminderText).toContain("objective: Keep the working set tight.");
-    expect(reminderText).toContain("notes:");
-    expect(reminderText).toContain("Parser follow-up is still open.");
+    expect(reminderText).toContain("notes: Parser follow-up is still open.");
     expect(reminderText).toContain("Other agent scratchpads:");
     expect(reminderText).toContain("- Beta:");
     expect(reminderText).toContain("findings: I already inspected the CLI wiring.");
@@ -255,8 +257,7 @@ describe("ScratchpadStrategy", () => {
     expect(result).toEqual({
       reason: "scratchpad-rendered",
       payloads: expect.objectContaining({
-        entryCount: 1,
-        notesCharCount: "Parser follow-up is still open.".length,
+        entryCount: 2,
         appliedOmitCount: 2,
         reminderTone: "informational",
       }),
@@ -268,7 +269,6 @@ describe("ScratchpadStrategy", () => {
     await store.set(
       { conversationId: "conv-1", agentId: "agent-1" },
       {
-        notes: "",
         keepLastMessages: 10,
         omitToolCallIds: [],
       }
@@ -288,7 +288,6 @@ describe("ScratchpadStrategy", () => {
     await store.set(
       { conversationId: "conv-1", agentId: "agent-1" },
       {
-        notes: "",
         keepLastMessages: 0,
         omitToolCallIds: ["call-old"],
       }
@@ -379,7 +378,7 @@ describe("ScratchpadStrategy", () => {
             type: "tool-call" as const,
             toolCallId: "scratch-call-1",
             toolName: "scratchpad",
-            input: { notes: "keep parser state" },
+            input: { setEntries: { notes: "keep parser state" } },
           },
         ],
       },
@@ -430,7 +429,9 @@ describe("ScratchpadStrategy", () => {
       await store.set(
         { conversationId: "conv-1", agentId: "agent-1" },
         {
-          notes: "working on poems",
+          entries: {
+            notes: "working on poems",
+          },
           keepLastMessages: 2,
           omitToolCallIds: [],
         }
@@ -467,7 +468,6 @@ describe("ScratchpadStrategy", () => {
       await store.set(
         { conversationId: "conv-1", agentId: "agent-1" },
         {
-          notes: "",
           keepLastMessages: 2,
           omitToolCallIds: [],
         }
@@ -500,7 +500,6 @@ describe("ScratchpadStrategy", () => {
       await store.set(
         { conversationId: "conv-1", agentId: "agent-1" },
         {
-          notes: "",
           keepLastMessages: 2,
           omitToolCallIds: [],
         }
@@ -556,11 +555,13 @@ describe("ScratchpadStrategy", () => {
         toolName: "scratchpad",
       });
 
-      // Now call the tool with only notes (no pruning params)
+      // Now call the tool with scratchpad entries only (no pruning params)
       const scratchpadTool = strategy.getOptionalTools?.().scratchpad;
       const result = await scratchpadTool.execute?.(
         {
-          notes: "I saved my progress but didn't prune",
+          setEntries: {
+            notes: "I saved my progress but didn't prune",
+          },
         },
         {
           toolCallId: "tool-call-forced",
@@ -577,11 +578,13 @@ describe("ScratchpadStrategy", () => {
       expect(result.ok).toBe(false);
       expect(result.error).toContain("Context is critically full");
       expect(result.error).toContain("keepLastMessages");
-      // Notes should still be saved in the store
+      // Scratchpad updates should still be saved in the store
       const saved = await store.get({ conversationId: "conv-1", agentId: "agent-1" });
       expect(saved).toEqual(
         expect.objectContaining({
-          notes: "I saved my progress but didn't prune",
+          entries: {
+            notes: "I saved my progress but didn't prune",
+          },
         })
       );
     });
@@ -607,7 +610,9 @@ describe("ScratchpadStrategy", () => {
       const scratchpadTool = strategy.getOptionalTools?.().scratchpad;
       const result = await scratchpadTool.execute?.(
         {
-          notes: "Saved progress",
+          setEntries: {
+            notes: "Saved progress",
+          },
           keepLastMessages: 5,
         },
         {
@@ -626,7 +631,9 @@ describe("ScratchpadStrategy", () => {
       const saved = await store.get({ conversationId: "conv-1", agentId: "agent-1" });
       expect(saved).toEqual(
         expect.objectContaining({
-          notes: "Saved progress",
+          entries: {
+            notes: "Saved progress",
+          },
           keepLastMessages: 5,
         })
       );
@@ -653,7 +660,9 @@ describe("ScratchpadStrategy", () => {
       const scratchpadTool = strategy.getOptionalTools?.().scratchpad;
       const result = await scratchpadTool.execute?.(
         {
-          notes: "Saved progress",
+          setEntries: {
+            notes: "Saved progress",
+          },
           omitToolCallIds: ["call-mid"],
         },
         {
@@ -678,7 +687,9 @@ describe("ScratchpadStrategy", () => {
 
       const result = await scratchpadTool.execute?.(
         {
-          notes: "Just saving notes",
+          setEntries: {
+            notes: "Just saving notes",
+          },
         },
         {
           toolCallId: "tool-call-1",

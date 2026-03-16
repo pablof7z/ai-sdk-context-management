@@ -85,19 +85,6 @@ export function removeEntryKeys(
   return normalizeEntryMap(nextEntries);
 }
 
-export function appendToNotes(currentNotes: string, nextNotes: string | undefined): string {
-  const trimmed = nextNotes?.trim() ?? "";
-  if (trimmed.length === 0) {
-    return currentNotes;
-  }
-
-  if (currentNotes.length === 0) {
-    return trimmed;
-  }
-
-  return `${currentNotes}\n\n${trimmed}`;
-}
-
 export function countEntryChars(entries: Record<string, string> | undefined): number {
   if (!entries) {
     return 0;
@@ -120,9 +107,8 @@ export function renderScratchpadState(state: ScratchpadState): string[] {
   const lines: string[] = [];
   const entries = state.entries ?? {};
   const entryItems = Object.entries(entries);
-  const notes = state.notes.trim();
 
-  if (entryItems.length === 0 && notes.length === 0) {
+  if (entryItems.length === 0) {
     lines.push("(empty)");
     return lines;
   }
@@ -136,15 +122,6 @@ export function renderScratchpadState(state: ScratchpadState): string[] {
     }
   }
 
-  if (notes.length > 0) {
-    if (entryItems.length > 0) {
-      lines.push("notes:");
-      lines.push(indentMultiline(notes));
-    } else {
-      lines.push(notes);
-    }
-  }
-
   return lines;
 }
 
@@ -152,10 +129,15 @@ export function normalizeScratchpadState(
   state: ScratchpadState | undefined,
   agentLabel?: string
 ): ScratchpadState {
-  const entries = normalizeEntryMap(state?.entries);
+  const legacyNotes = typeof (state as ScratchpadState & { notes?: unknown } | undefined)?.notes === "string"
+    ? ((state as ScratchpadState & { notes?: string }).notes?.trim() ?? "")
+    : "";
+  const entries = normalizeEntryMap({
+    ...(state?.entries ?? {}),
+    ...(legacyNotes.length > 0 && state?.entries?.notes === undefined ? { notes: legacyNotes } : {}),
+  });
   return {
     ...(entries ? { entries } : {}),
-    notes: state?.notes ?? "",
     keepLastMessages: normalizeKeepLastMessages(state?.keepLastMessages),
     omitToolCallIds: dedupeStrings(state?.omitToolCallIds ?? []),
     ...(typeof state?.updatedAt === "number" ? { updatedAt: state.updatedAt } : {}),

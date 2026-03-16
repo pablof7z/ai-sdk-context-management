@@ -29,17 +29,16 @@ function buildReminderBlock(options) {
         }
     }
     if (forced) {
-        lines.push("CRITICAL: Context is nearly full. You MUST:", "1. Record side-effect actions in your scratchpad (entries and/or notes)", "2. Set keepLastMessages to trim old messages (e.g. 5-10)", "3. Add completed tool call IDs to omitToolCallIds", "Failure to free context will result in an error.");
+        lines.push("CRITICAL: Context is nearly full. You MUST:", "1. Record side-effect actions in your scratchpad entries", "2. Set keepLastMessages to trim old messages (e.g. 5-10)", "3. Add completed tool call IDs to omitToolCallIds", "Failure to free context will result in an error.");
     }
     else if (reminderTone === "informational") {
-        if ((currentState.entries === undefined || Object.keys(currentState.entries).length === 0)
-            && currentState.notes.trim().length === 0) {
-            lines.push("Suggested entry names for this run: objective, thesis, findings, side-effects, next-steps. Use any keys that fit the work.");
+        if (currentState.entries === undefined || Object.keys(currentState.entries).length === 0) {
+            lines.push("Suggested entry names for this run: objective, thesis, findings, notes, side-effects, next-steps. Use any keys that fit the work.");
         }
-        lines.push("Use scratchpad(...) proactively to keep this working state current. Prefer rewriting stale entries over keeping a chronological log. Notes persist within this conversation only — they do not carry over to new conversations.");
+        lines.push("Use scratchpad(...) proactively to keep this working state current. Prefer rewriting stale entries over keeping a chronological log. Scratchpad entries persist within this conversation only — they do not carry over to new conversations.");
     }
     else if (reminderTone === "urgent") {
-        lines.push("Use scratchpad(...) now to rewrite your current working state, preserve progress within this conversation, or proactively remove stale context. Notes do not carry over to new conversations.");
+        lines.push("Use scratchpad(...) now to rewrite your current working state, preserve progress within this conversation, or proactively remove stale context. Scratchpad entries do not carry over to new conversations.");
     }
     return lines.join("\n");
 }
@@ -151,7 +150,6 @@ export class ScratchpadStrategy {
             payloads: {
                 entryCount: Object.keys(currentState.entries ?? {}).length,
                 entryCharCount: countEntryChars(currentState.entries),
-                notesCharCount: currentState.notes.length,
                 keepLastMessages: currentState.keepLastMessages,
                 appliedOmitCount: appliedOmitToolCallIds.length,
                 otherScratchpadCount: allScratchpads.length,

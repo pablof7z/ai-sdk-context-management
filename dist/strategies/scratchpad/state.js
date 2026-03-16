@@ -58,16 +58,6 @@ export function removeEntryKeys(entries, keys) {
     }
     return normalizeEntryMap(nextEntries);
 }
-export function appendToNotes(currentNotes, nextNotes) {
-    const trimmed = nextNotes?.trim() ?? "";
-    if (trimmed.length === 0) {
-        return currentNotes;
-    }
-    if (currentNotes.length === 0) {
-        return trimmed;
-    }
-    return `${currentNotes}\n\n${trimmed}`;
-}
 export function countEntryChars(entries) {
     if (!entries) {
         return 0;
@@ -84,8 +74,7 @@ export function renderScratchpadState(state) {
     const lines = [];
     const entries = state.entries ?? {};
     const entryItems = Object.entries(entries);
-    const notes = state.notes.trim();
-    if (entryItems.length === 0 && notes.length === 0) {
+    if (entryItems.length === 0) {
         lines.push("(empty)");
         return lines;
     }
@@ -98,22 +87,18 @@ export function renderScratchpadState(state) {
             lines.push(`${key}: ${value}`);
         }
     }
-    if (notes.length > 0) {
-        if (entryItems.length > 0) {
-            lines.push("notes:");
-            lines.push(indentMultiline(notes));
-        }
-        else {
-            lines.push(notes);
-        }
-    }
     return lines;
 }
 export function normalizeScratchpadState(state, agentLabel) {
-    const entries = normalizeEntryMap(state?.entries);
+    const legacyNotes = typeof state?.notes === "string"
+        ? (state.notes?.trim() ?? "")
+        : "";
+    const entries = normalizeEntryMap({
+        ...(state?.entries ?? {}),
+        ...(legacyNotes.length > 0 && state?.entries?.notes === undefined ? { notes: legacyNotes } : {}),
+    });
     return {
         ...(entries ? { entries } : {}),
-        notes: state?.notes ?? "",
         keepLastMessages: normalizeKeepLastMessages(state?.keepLastMessages),
         omitToolCallIds: dedupeStrings(state?.omitToolCallIds ?? []),
         ...(typeof state?.updatedAt === "number" ? { updatedAt: state.updatedAt } : {}),

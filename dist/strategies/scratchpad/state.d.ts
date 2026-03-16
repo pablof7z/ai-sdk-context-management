@@ -4,7 +4,6 @@ export declare function normalizeKeepLastMessages(value: number | null | undefin
 export declare function normalizeEntryMap(value: Record<string, unknown> | undefined): Record<string, string> | undefined;
 export declare function mergeEntryMaps(currentEntries: Record<string, string> | undefined, nextEntries: Record<string, string> | undefined): Record<string, string> | undefined;
 export declare function removeEntryKeys(entries: Record<string, string> | undefined, keys: readonly string[] | undefined): Record<string, string> | undefined;
-export declare function appendToNotes(currentNotes: string, nextNotes: string | undefined): string;
 export declare function countEntryChars(entries: Record<string, string> | undefined): number;
 export declare function indentMultiline(value: string, prefix?: string): string;
 export declare function renderScratchpadState(state: ScratchpadState): string[];

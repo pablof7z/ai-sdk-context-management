@@ -289,7 +289,6 @@ export interface ScratchpadStoreKey {
 
 export interface ScratchpadState {
   entries?: Record<string, string>;
-  notes: string;
   keepLastMessages?: number | null;
   omitToolCallIds: string[];
   updatedAt?: number;
@@ -320,9 +319,6 @@ export interface ScratchpadStrategyOptions {
 }
 
 export interface ScratchpadToolInput {
-  notes?: string;
-  appendNotes?: string;
-  clearNotes?: boolean;
   setEntries?: Record<string, string>;
   replaceEntries?: Record<string, string>;
   removeEntryKeys?: string[];

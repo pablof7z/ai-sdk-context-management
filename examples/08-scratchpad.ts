@@ -22,7 +22,6 @@ async function main() {
       objective: "Finish parser review",
       status: "API review complete, waiting on parser validation.",
     },
-    notes: "",
     omitToolCallIds: [],
     agentLabel: "Planner",
   });
@@ -59,8 +58,8 @@ async function main() {
       setEntries: {
         finding: "Parser edge case is around trailing commas.",
         nextStep: "Re-check trailing comma handling in parser.ts.",
+        notes: "Reviewer: old shell output is no longer needed.",
       },
-      appendNotes: "Reviewer: old shell output is no longer needed.",
       omitToolCallIds: ["call-old"],
     },
     { experimental_context: DEMO_CONTEXT }
@@ -105,7 +104,7 @@ async function main() {
   console.log("\nWhat changed:");
   console.log("- the omitted tool exchange disappeared from the prompt");
   console.log("- the latest user message gained a scratchpad reminder block");
-  console.log("- structured scratchpad entries were injected alongside notes");
+  console.log("- scratchpad entries, including a notes key, were injected into the reminder block");
   console.log("- other agents' scratchpads were injected with attribution");
   console.log(`\nModel output: ${result.text}`);
 }

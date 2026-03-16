@@ -1,6 +1,6 @@
 import { jsonSchema, tool } from "ai";
 import { CONTEXT_MANAGEMENT_KEY } from "../../../types.js";
-import { appendToNotes, dedupeStrings, mergeEntryMaps, normalizeEntryMap, normalizeKeepLastMessages, normalizeScratchpadState, removeEntryKeys, } from "../state.js";
+import { dedupeStrings, mergeEntryMaps, normalizeEntryMap, normalizeKeepLastMessages, normalizeScratchpadState, removeEntryKeys, } from "../state.js";
 function buildScratchpadKey(context) {
     return {
         conversationId: context.conversationId,
@@ -34,29 +34,17 @@ function extractRequestContextFromExperimentalContext(experimentalContext) {
 }
 export function createScratchpadTool(options) {
     return tool({
-        description: "Manage your working memory and context window. Use key/value entries and notes to keep the current working state for this run. Prefer rewriting stale state over keeping a chronological log. Use keepLastMessages and omitToolCallIds to free context when it grows too large.\n\nIMPORTANT: Before pruning context, record in your scratchpad any actions you took that had side effects (file writes, API calls, published events, state changes) so you don't forget or repeat them.\n\nkeepLastMessages preserves the original conversation start and your most recent N messages, removing everything in between.",
+        description: "Manage your working memory and context window. Use key/value entries to keep the current working state for this run. Multiline values are fine, and common keys include objective, findings, notes, side-effects, and next-steps. Prefer rewriting stale state over keeping a chronological log. Use keepLastMessages and omitToolCallIds to free context when it grows too large.\n\nIMPORTANT: Before pruning context, record in your scratchpad any actions you took that had side effects (file writes, API calls, published events, state changes) so you don't forget or repeat them.\n\nkeepLastMessages preserves the original conversation start and your most recent N messages, removing everything in between.",
         inputSchema: jsonSchema({
             type: "object",
             additionalProperties: false,
             properties: {
-                notes: {
-                    type: "string",
-                    description: "Replace your freeform notes. Use this for unstructured context that does not fit cleanly into key/value entries.",
-                },
-                appendNotes: {
-                    type: "string",
-                    description: "Append text to your current freeform notes. Prefer concise updates and rewrite stale notes when they no longer matter.",
-                },
-                clearNotes: {
-                    type: "boolean",
-                    description: "Clear all current freeform notes before applying any new notes or appendNotes in this call.",
-                },
                 setEntries: {
                     type: "object",
                     additionalProperties: {
                         type: "string",
                     },
-                    description: "Merge key/value entries into your scratchpad. Use any keys that fit the task, such as objective, thesis, findings, side-effects, or next-steps.",
+                    description: "Merge key/value entries into your scratchpad. Use any keys that fit the task, such as objective, thesis, findings, notes, side-effects, or next-steps.",
                 },
                 replaceEntries: {
                     type: "object",
@@ -97,9 +85,6 @@ export function createScratchpadTool(options) {
             const requestContext = extractRequestContextFromExperimentalContext(executeOptions.experimental_context);
             const key = buildScratchpadKey(requestContext);
             const currentState = normalizeScratchpadState(await options.scratchpadStore.get(key), requestContext.agentLabel);
-            const baseNotes = input.clearNotes === true ? "" : currentState.notes;
-            const replacedNotes = input.notes !== undefined ? input.notes.trim() : baseNotes;
-            const nextNotes = appendToNotes(replacedNotes, input.appendNotes);
             const replacedEntries = input.replaceEntries !== undefined
                 ? normalizeEntryMap(input.replaceEntries)
                 : currentState.entries;
@@ -108,7 +93,6 @@ export function createScratchpadTool(options) {
                 : replacedEntries;
             const nextEntries = removeEntryKeys(mergedEntries, input.removeEntryKeys);
             await options.scratchpadStore.set(key, {
-                notes: nextNotes,
                 ...(nextEntries ? { entries: nextEntries } : {}),
                 ...(input.keepLastMessages !== undefined
                     ? { keepLastMessages: normalizeKeepLastMessages(input.keepLastMessages) }
@@ -129,7 +113,7 @@ export function createScratchpadTool(options) {
                 if (!hasPruningParams) {
                     return {
                         ok: false,
-                        error: "Context is critically full. You MUST free context by setting keepLastMessages (integer) to trim old messages, and/or omitToolCallIds (array of tool call IDs) to remove completed tool results. Notes were saved, but you need to call scratchpad again with pruning parameters.",
+                        error: "Context is critically full. You MUST free context by setting keepLastMessages (integer) to trim old messages, and/or omitToolCallIds (array of tool call IDs) to remove completed tool results. Your scratchpad updates were saved, but you need to call scratchpad again with pruning parameters.",
                     };
                 }
             }

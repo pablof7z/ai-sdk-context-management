@@ -82,7 +82,9 @@ async function main() {
     execute: (input: unknown, options: { experimental_context: unknown }) => Promise<unknown>;
   }).execute(
     {
-      notes: "Track config, test setup, and entry point.",
+      setEntries: {
+        notes: "Track config, test setup, and entry point.",
+      },
     },
     { experimental_context: DEMO_CONTEXT }
   );

@@ -62,7 +62,9 @@ describe("context management runtime integration", () => {
                   toolCallId: "scratchpad-call-1",
                   toolName: "scratchpad",
                   input: JSON.stringify({
-                    notes: "Track parser follow-up",
+                    setEntries: {
+                      notes: "Track parser follow-up",
+                    },
                     omitToolCallIds: ["call-old"],
                   }),
                 },
@@ -129,7 +131,9 @@ describe("context management runtime integration", () => {
     expect(await result.text).toBe("done");
     expect(await store.get({ conversationId: "conv-1", agentId: "agent-1" })).toEqual(
       expect.objectContaining({
-        notes: "Track parser follow-up",
+        entries: {
+          notes: "Track parser follow-up",
+        },
         omitToolCallIds: ["call-old"],
       })
     );
