@@ -1,5 +1,5 @@
 import type { LanguageModelV3Prompt, LanguageModelV3ToolResultOutput } from "@ai-sdk/provider";
-import { ToolResultDecayStrategy } from "../tool-result-decay-strategy.js";
+import { ToolResultDecayStrategy } from "../index.js";
 import type { ContextManagementReminder, DecayedToolContext, RemovedToolExchange } from "../types.js";
 
 function makeToolPrompt(toolCount: number, outputSize = 200): LanguageModelV3Prompt {

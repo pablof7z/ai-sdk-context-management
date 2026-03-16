@@ -57,7 +57,7 @@ npx tsx 01-sliding-window.ts
 ### `08-scratchpad.ts`
 
 - shows the `scratchpad(...)` tool affecting future turns
-- look for omitted tool exchanges disappearing and notes being injected into the latest user message
+- look for omitted tool exchanges disappearing and structured scratchpad state being injected into the latest user message
 
 ### `09-pinned-messages.ts`
 

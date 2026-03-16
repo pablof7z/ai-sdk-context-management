@@ -1,4 +1,4 @@
-import { PinnedMessagesStrategy } from "../pinned-messages-strategy.js";
+import { PinnedMessagesStrategy } from "../index.js";
 import type { PinnedStore, PinnedStoreKey, ContextManagementStrategyState, RemovedToolExchange } from "../types.js";
 import { makePrompt } from "./helpers.js";
 

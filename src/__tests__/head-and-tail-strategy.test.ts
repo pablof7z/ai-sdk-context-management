@@ -1,5 +1,5 @@
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
-import { HeadAndTailStrategy } from "../head-and-tail-strategy.js";
+import { HeadAndTailStrategy } from "../index.js";
 import type { RemovedToolExchange } from "../types.js";
 
 function makeState(prompt: LanguageModelV3Prompt, pinnedIds: string[] = []) {

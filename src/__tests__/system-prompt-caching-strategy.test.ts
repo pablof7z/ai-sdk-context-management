@@ -1,5 +1,5 @@
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
-import { SystemPromptCachingStrategy } from "../system-prompt-caching-strategy.js";
+import { SystemPromptCachingStrategy } from "../index.js";
 
 describe("SystemPromptCachingStrategy", () => {
   function makeState(prompt: LanguageModelV3Prompt) {

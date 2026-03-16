@@ -1,9 +1,9 @@
 /**
- * Scratchpad — let the agent leave notes and omit stale tool exchanges
+ * Scratchpad — let the agent maintain structured working state and omit stale tool exchanges
  */
 import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
-import type { ScratchpadState } from "ai-sdk-context-management";
+import type { ScratchpadState, ScratchpadToolInput } from "ai-sdk-context-management";
 import {
   ScratchpadStrategy,
   createContextManagementRuntime,
@@ -18,7 +18,11 @@ import {
 async function main() {
   const scratchpads = new Map<string, ScratchpadState>();
   scratchpads.set("demo-conversation:planner", {
-    notes: "Planner: API review complete, waiting on parser validation.",
+    entries: {
+      objective: "Finish parser review",
+      status: "API review complete, waiting on parser validation.",
+    },
+    notes: "",
     omitToolCallIds: [],
     agentLabel: "Planner",
   });
@@ -47,12 +51,16 @@ async function main() {
 
   const toolResult = await ((runtime.optionalTools.scratchpad as unknown) as {
     execute: (
-      input: { notes: string; omitToolCallIds: string[] },
+      input: ScratchpadToolInput,
       options: { experimental_context: unknown }
     ) => Promise<unknown>;
   }).execute(
     {
-      notes: "Reviewer: parser edge case is around trailing commas.",
+      setEntries: {
+        finding: "Parser edge case is around trailing commas.",
+        nextStep: "Re-check trailing comma handling in parser.ts.",
+      },
+      appendNotes: "Reviewer: old shell output is no longer needed.",
       omitToolCallIds: ["call-old"],
     },
     { experimental_context: DEMO_CONTEXT }
@@ -97,7 +105,8 @@ async function main() {
   console.log("\nWhat changed:");
   console.log("- the omitted tool exchange disappeared from the prompt");
   console.log("- the latest user message gained a scratchpad reminder block");
-  console.log("- other agents' notes were injected with attribution");
+  console.log("- structured scratchpad entries were injected alongside notes");
+  console.log("- other agents' scratchpads were injected with attribution");
   console.log(`\nModel output: ${result.text}`);
 }
 

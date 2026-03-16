@@ -83,20 +83,21 @@ If that context is missing, the middleware becomes a no-op and context-managemen
 
 ## Strategy Index
 
-Per-strategy docs live in [`docs/strategies/`](./docs/strategies/README.md).
+Per-strategy docs live in [`src/strategies/`](./src/strategies/README.md).
 
 | Strategy | What changes in the prompt | What the agent gets | Docs | Runnable example |
 | --- | --- | --- | --- | --- |
-| `SystemPromptCachingStrategy` | Moves system messages into a stable prefix and can consolidate them | Better cache reuse and less prompt churn | [docs](./docs/strategies/system-prompt-caching/README.md) | [06-system-prompt-caching.ts](./examples/06-system-prompt-caching.ts) |
-| `SlidingWindowStrategy` | Keeps the recent tail and drops older non-system turns | Bounded context with simple recency bias | [docs](./docs/strategies/sliding-window/README.md) | [01-sliding-window.ts](./examples/01-sliding-window.ts) |
-| `HeadAndTailStrategy` | Keeps the beginning and end, drops the middle | Preserves initial instructions plus current work | [docs](./docs/strategies/head-and-tail/README.md) | [05-head-and-tail.ts](./examples/05-head-and-tail.ts) |
-| `ToolResultDecayStrategy` | Leaves recent tool results raw, truncates medium-age ones, masks older ones | Keeps the reasoning chain while shrinking the heaviest payloads | [docs](./docs/strategies/tool-result-decay/README.md) | [02-tool-result-decay.ts](./examples/02-tool-result-decay.ts) |
-| `SummarizationStrategy` | Replaces older turns with a tagged summary block | Older facts survive in compressed form | [docs](./docs/strategies/summarization/README.md) | [03-summarization.ts](./examples/03-summarization.ts) |
-| `LLMSummarizationStrategy` | Uses an AI SDK model to produce the summary block | Better summaries with less host-side wiring | [docs](./docs/strategies/llm-summarization/README.md) | [07-llm-summarization.ts](./examples/07-llm-summarization.ts) |
-| `ScratchpadStrategy` | Injects persisted notes and can remove stale tool exchanges | A place for progress notes and selective forgetting | [docs](./docs/strategies/scratchpad/README.md) | [08-scratchpad.ts](./examples/08-scratchpad.ts) |
-| `PinnedMessagesStrategy` | Marks specific tool call IDs as protected before pruning | Lets the agent keep the evidence it considers critical | [docs](./docs/strategies/pinned-messages/README.md) | [09-pinned-messages.ts](./examples/09-pinned-messages.ts) |
-| `CompactionToolStrategy` | Compacts old history only after the agent asks for it | Agent-controlled compression at task boundaries | [docs](./docs/strategies/compaction-tool/README.md) | [10-compaction-tool.ts](./examples/10-compaction-tool.ts) |
-| `ContextUtilizationReminderStrategy` | Appends a warning block when the prompt gets tight | Gives the agent time to summarize or compact before failure | [docs](./docs/strategies/context-utilization-reminder/README.md) | [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) |
+| `SystemPromptCachingStrategy` | Moves system messages into a stable prefix and can consolidate them | Better cache reuse and less prompt churn | [docs](./src/strategies/system-prompt-caching/README.md) | [06-system-prompt-caching.ts](./examples/06-system-prompt-caching.ts) |
+| `SlidingWindowStrategy` | Keeps the recent tail and drops older non-system turns | Bounded context with simple recency bias | [docs](./src/strategies/sliding-window/README.md) | [01-sliding-window.ts](./examples/01-sliding-window.ts) |
+| `HeadAndTailStrategy` | Keeps the beginning and end, drops the middle | Preserves initial instructions plus current work | [docs](./src/strategies/head-and-tail/README.md) | [05-head-and-tail.ts](./examples/05-head-and-tail.ts) |
+| `ToolResultDecayStrategy` | Leaves recent tool results raw, truncates medium-age ones, masks older ones | Keeps the reasoning chain while shrinking the heaviest payloads | [docs](./src/strategies/tool-result-decay/README.md) | [02-tool-result-decay.ts](./examples/02-tool-result-decay.ts) |
+| `SummarizationStrategy` | Replaces older turns with a tagged summary block | Older facts survive in compressed form | [docs](./src/strategies/summarization/README.md) | [03-summarization.ts](./examples/03-summarization.ts) |
+| `LLMSummarizationStrategy` | Uses an AI SDK model to produce the summary block | Better summaries with less host-side wiring | [docs](./src/strategies/llm-summarization/README.md) | [07-llm-summarization.ts](./examples/07-llm-summarization.ts) |
+| `ScratchpadStrategy` | Injects persisted scratchpad state and can remove stale tool exchanges | Structured working state, note edits, and selective forgetting | [docs](./src/strategies/scratchpad/README.md) | [08-scratchpad.ts](./examples/08-scratchpad.ts) |
+| `PinnedMessagesStrategy` | Marks specific tool call IDs as protected before pruning | Lets the agent keep the evidence it considers critical | [docs](./src/strategies/pinned-messages/README.md) | [09-pinned-messages.ts](./examples/09-pinned-messages.ts) |
+| `CompactionToolStrategy` | Compacts old history only after the agent asks for it | Agent-controlled compression at task boundaries | [docs](./src/strategies/compaction-tool/README.md) | [10-compaction-tool.ts](./examples/10-compaction-tool.ts) |
+| `ContextUtilizationReminderStrategy` | Appends a warning block when the prompt gets tight | Gives the agent time to summarize or compact before failure | [docs](./src/strategies/context-utilization-reminder/README.md) | [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) |
+| `ContextWindowStatusStrategy` | Appends a compact token-usage status block to the latest user turn | Gives the agent explicit working-budget and raw-window visibility | [docs](./src/strategies/context-window-status/README.md) | n/a |
 
 ## Strategy Ordering
 
@@ -154,6 +155,23 @@ Returns:
 - `optionalTools`
 
 The runtime merges tools from all strategies and throws on tool-name collisions.
+
+## Scratchpad API
+
+`ScratchpadStrategy` exposes a `scratchpad(...)` tool for maintaining current working state across turns.
+
+The tool supports:
+
+- `setEntries`: merge key/value entries into the scratchpad
+- `replaceEntries`: replace all key/value entries
+- `removeEntryKeys`: delete specific entries by key
+- `notes`: replace freeform notes
+- `appendNotes`: append to freeform notes
+- `clearNotes`: clear freeform notes before applying updates
+- `keepLastMessages`: trim older non-system messages while preserving the original task
+- `omitToolCallIds`: remove completed tool exchanges after the important parts have been captured
+
+Entry names are intentionally unconstrained. Common choices are `objective`, `thesis`, `findings`, `side-effects`, and `next-steps`, but the agent can use whatever keys match the task.
 
 ## Telemetry
 

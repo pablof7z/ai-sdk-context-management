@@ -1,5 +1,5 @@
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
-import { CompactionToolStrategy } from "../compaction-tool-strategy.js";
+import { CompactionToolStrategy } from "../index.js";
 import type {
   CompactionStore,
   CompactionStoreKey,

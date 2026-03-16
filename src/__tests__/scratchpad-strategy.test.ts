@@ -132,19 +132,75 @@ describe("ScratchpadStrategy", () => {
     expect(await store.get({ conversationId: "conv-1", agentId: "agent-2" })).toBeUndefined();
   });
 
+  test("scratchpad tool supports key/value entries and note edit operations", async () => {
+    const store = new InMemoryScratchpadStore();
+    await store.set(
+      { conversationId: "conv-1", agentId: "agent-1" },
+      {
+        entries: {
+          objective: "Inspect the parser flow",
+          stale: "remove me",
+        },
+        notes: "Existing notes",
+        omitToolCallIds: [],
+      }
+    );
+
+    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+    const scratchpadTool = strategy.getOptionalTools?.().scratchpad;
+
+    const result = await scratchpadTool.execute?.(
+      {
+        appendNotes: "Fresh follow-up",
+        setEntries: {
+          findings: "Tool ordering still looks correct",
+        },
+        removeEntryKeys: ["stale"],
+      },
+      {
+        toolCallId: "tool-call-2",
+        messages: [],
+        experimental_context: {
+          contextManagement: {
+            conversationId: "conv-1",
+            agentId: "agent-1",
+            agentLabel: "Alpha",
+          },
+        },
+      }
+    );
+
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(await store.get({ conversationId: "conv-1", agentId: "agent-1" })).toEqual(
+      expect.objectContaining({
+        entries: {
+          findings: "Tool ordering still looks correct",
+          objective: "Inspect the parser flow",
+        },
+        notes: "Existing notes\n\nFresh follow-up",
+      })
+    );
+  });
+
   test("applies explicit omissions and injects attributed reminders", async () => {
     const store = new InMemoryScratchpadStore();
     await store.set(
       { conversationId: "conv-1", agentId: "agent-1" },
       {
-        notes: "Keep the working set tight.",
+        entries: {
+          objective: "Keep the working set tight.",
+        },
+        notes: "Parser follow-up is still open.",
         omitToolCallIds: ["call-old", "call-older"],
       }
     );
     await store.set(
       { conversationId: "conv-1", agentId: "agent-2" },
       {
-        notes: "I already inspected the CLI wiring.",
+        entries: {
+          findings: "I already inspected the CLI wiring.",
+        },
+        notes: "",
         omitToolCallIds: [],
         agentLabel: "Beta",
       }
@@ -187,16 +243,20 @@ describe("ScratchpadStrategy", () => {
     const reminderText = latestUserMessage?.content.at(-1)?.text ?? "";
 
     expect(reminderText).toContain("Your scratchpad (Alpha)");
-    expect(reminderText).toContain("Keep the working set tight.");
+    expect(reminderText).toContain("objective: Keep the working set tight.");
+    expect(reminderText).toContain("notes:");
+    expect(reminderText).toContain("Parser follow-up is still open.");
     expect(reminderText).toContain("Other agent scratchpads:");
-    expect(reminderText).toContain("Beta: I already inspected the CLI wiring.");
+    expect(reminderText).toContain("- Beta:");
+    expect(reminderText).toContain("findings: I already inspected the CLI wiring.");
     expect(reminderText).not.toContain("Removed tool exchanges:");
-    expect(reminderText).toContain("You can update these notes or future omissions with scratchpad(...).");
+    expect(reminderText).toContain("Use scratchpad(...) proactively to keep this working state current.");
     expect(reminderText).not.toContain("Use scratchpad(...) now");
     expect(result).toEqual({
       reason: "scratchpad-rendered",
       payloads: expect.objectContaining({
-        notesCharCount: "Keep the working set tight.".length,
+        entryCount: 1,
+        notesCharCount: "Parser follow-up is still open.".length,
         appliedOmitCount: 2,
         reminderTone: "informational",
       }),
@@ -657,7 +717,7 @@ describe("ScratchpadStrategy", () => {
       const reminderText = latestUserMessage?.content.at(-1)?.text ?? "";
 
       expect(reminderText).toContain("CRITICAL: Context is nearly full");
-      expect(reminderText).toContain("Record any side-effect actions in notes");
+      expect(reminderText).toContain("Record side-effect actions in your scratchpad");
       expect(reminderText).toContain("Set keepLastMessages to trim old messages");
       expect(reminderText).toContain("Failure to free context will result in an error");
     });
@@ -682,7 +742,8 @@ describe("ScratchpadStrategy", () => {
       const reminderText = latestUserMessage?.content.at(-1)?.text ?? "";
 
       expect(reminderText).not.toContain("CRITICAL");
-      expect(reminderText).toContain("You can update these notes");
+      expect(reminderText).toContain("Suggested entry names for this run");
+      expect(reminderText).toContain("Use scratchpad(...) proactively");
     });
   });
 });

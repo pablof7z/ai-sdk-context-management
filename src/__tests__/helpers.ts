@@ -9,6 +9,7 @@ import type {
 function cloneState(state: ScratchpadState): ScratchpadState {
   return {
     ...state,
+    ...(state.entries ? { entries: { ...state.entries } } : {}),
     omitToolCallIds: [...state.omitToolCallIds],
   };
 }

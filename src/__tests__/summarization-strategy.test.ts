@@ -1,5 +1,5 @@
 import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
-import { SummarizationStrategy } from "../summarization-strategy.js";
+import { SummarizationStrategy } from "../index.js";
 import type {
   ContextManagementStrategyState,
   RemovedToolExchange,
