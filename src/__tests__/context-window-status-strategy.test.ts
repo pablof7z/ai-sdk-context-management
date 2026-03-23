@@ -8,8 +8,17 @@ describe("ContextWindowStatusStrategy", () => {
     const runtime = createContextManagementRuntime({
       strategies: [
         new ContextWindowStatusStrategy({
-          workingTokenBudget: 400,
-          estimator: {
+          budgetProfile: {
+            tokenBudget: 400,
+            label: "managed working budget",
+            description: "This excludes base system prompts, tool definitions, and reminder blocks.",
+            estimator: {
+              estimateMessage: () => 10,
+              estimatePrompt: () => 80,
+              estimateTools: () => 0,
+            },
+          },
+          requestEstimator: {
             estimateMessage: () => 10,
             estimatePrompt: () => 120,
             estimateTools: () => 30,
@@ -55,30 +64,35 @@ describe("ContextWindowStatusStrategy", () => {
     } as any);
 
     expect(JSON.stringify(transformed?.prompt)).toContain("Current request after context management: ~150 tokens.");
+    expect(JSON.stringify(transformed?.prompt)).toContain("managed working budget context: ~80 tokens.");
+    expect(JSON.stringify(transformed?.prompt)).toContain("Static overhead outside the managed working budget: ~70 tokens.");
     expect(JSON.stringify(transformed?.prompt)).toContain("Breakdown: ~120 message tokens + ~30 tool-definition tokens.");
-    expect(JSON.stringify(transformed?.prompt)).toContain("Working budget target: ~400 tokens (~38% used).");
+    expect(JSON.stringify(transformed?.prompt)).toContain("managed working budget target: ~400 tokens (~20% used).");
     expect(JSON.stringify(transformed?.prompt)).toContain("Raw model context window: ~200,000 tokens (~0% used).");
 
     const strategyEvent = events.find((event) => event.type === "strategy-complete");
     expect(strategyEvent).toBeDefined();
     if (strategyEvent?.type === "strategy-complete") {
       expect(strategyEvent.reason).toBe("context-window-status-injected");
-        expect(strategyEvent.payloads.strategy).toEqual(
-          expect.objectContaining({
-            estimatedPromptTokens: 150,
-            estimatedMessageTokens: 120,
-            estimatedToolTokens: 30,
-            rawContextWindow: 200_000,
-            workingTokenBudget: 400,
-            reminderText: expect.stringContaining("Current request after context management"),
-          })
-        );
+      expect(strategyEvent.strategyPayload).toEqual(
+        expect.objectContaining({
+          kind: "context-window-status",
+          estimatedPromptTokens: 150,
+          estimatedMessageTokens: 120,
+          estimatedToolTokens: 30,
+          budgetScopedTokens: 80,
+          staticOverheadTokens: 70,
+          rawContextWindow: 200_000,
+          workingTokenBudget: 400,
+          reminderText: expect.stringContaining("Current request after context management"),
+        })
+      );
     }
   });
 
   test("skips when neither working budget nor raw context window is available", async () => {
     const strategy = new ContextWindowStatusStrategy({
-      estimator: {
+      requestEstimator: {
         estimateMessage: () => 10,
         estimatePrompt: () => 120,
         estimateTools: () => 30,
@@ -108,6 +122,7 @@ describe("ContextWindowStatusStrategy", () => {
       outcome: "skipped",
       reason: "no-context-capacity-data",
       payloads: {
+        kind: "context-window-status",
         estimatedPromptTokens: 150,
         estimatedMessageTokens: 120,
         estimatedToolTokens: 30,

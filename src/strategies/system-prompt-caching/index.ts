@@ -48,6 +48,7 @@ export class SystemPromptCachingStrategy implements ContextManagementStrategy {
     return {
       reason: "system-prefix-reordered",
       payloads: {
+        kind: "system-prompt-caching",
         consolidateSystemMessages: this.consolidateSystemMessages,
         systemMessageCountBefore: systemMessages.length,
         systemMessageCountAfter: reorderedSystemMessages.length,

@@ -9,5 +9,6 @@ export { ContextUtilizationReminderStrategy } from "./strategies/context-utiliza
 export { ContextWindowStatusStrategy } from "./strategies/context-window-status/index.js";
 export { CompactionToolStrategy } from "./strategies/compaction-tool/index.js";
 export { PinnedMessagesStrategy } from "./strategies/pinned-messages/index.js";
+export { normalizeContextBudgetProfile, estimateBudgetProfileTokens } from "./context-budget-profile.js";
 export { createDefaultPromptTokenEstimator } from "./token-estimator.js";
 export { CONTEXT_MANAGEMENT_KEY } from "./types.js";

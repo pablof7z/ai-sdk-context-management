@@ -469,12 +469,14 @@ describe("ScratchpadStrategy", () => {
     ];
     const strategy = new ScratchpadStrategy({
       scratchpadStore: store,
-      workingTokenBudget: 100,
-      forceToolThresholdRatio: 0.7,
-      estimator: {
-        estimateMessage: () => 10,
-        estimatePrompt: () => 80,
+      budgetProfile: {
+        tokenBudget: 100,
+        estimator: {
+          estimateMessage: () => 10,
+          estimatePrompt: () => 80,
+        },
       },
+      forceToolThresholdRatio: 0.7,
     });
     const state = makeState(prompt);
 
@@ -527,12 +529,14 @@ describe("ScratchpadStrategy", () => {
     ];
     const strategy = new ScratchpadStrategy({
       scratchpadStore: store,
-      workingTokenBudget: 100,
-      forceToolThresholdRatio: 0.7,
-      estimator: {
-        estimateMessage: () => 10,
-        estimatePrompt: () => 80,
+      budgetProfile: {
+        tokenBudget: 100,
+        estimator: {
+          estimateMessage: () => 10,
+          estimatePrompt: () => 80,
+        },
       },
+      forceToolThresholdRatio: 0.7,
     });
     const state = makeState(prompt);
 
@@ -555,12 +559,14 @@ describe("ScratchpadStrategy", () => {
       const store = new InMemoryScratchpadStore();
       const strategy = new ScratchpadStrategy({
         scratchpadStore: store,
-        workingTokenBudget: 100,
-        forceToolThresholdRatio: 0.7,
-        estimator: {
-          estimateMessage: () => 10,
-          estimatePrompt: () => 80,
+        budgetProfile: {
+          tokenBudget: 100,
+          estimator: {
+            estimateMessage: () => 10,
+            estimatePrompt: () => 80,
+          },
         },
+        forceToolThresholdRatio: 0.7,
       });
 
       const state = makeState([
@@ -618,12 +624,14 @@ describe("ScratchpadStrategy", () => {
       const store = new InMemoryScratchpadStore();
       const strategy = new ScratchpadStrategy({
         scratchpadStore: store,
-        workingTokenBudget: 100,
-        forceToolThresholdRatio: 0.7,
-        estimator: {
-          estimateMessage: () => 10,
-          estimatePrompt: () => 80,
+        budgetProfile: {
+          tokenBudget: 100,
+          estimator: {
+            estimateMessage: () => 10,
+            estimatePrompt: () => 80,
+          },
         },
+        forceToolThresholdRatio: 0.7,
       });
 
       const state = makeState([
@@ -677,12 +685,14 @@ describe("ScratchpadStrategy", () => {
       const store = new InMemoryScratchpadStore();
       const strategy = new ScratchpadStrategy({
         scratchpadStore: store,
-        workingTokenBudget: 100,
-        forceToolThresholdRatio: 0.7,
-        estimator: {
-          estimateMessage: () => 10,
-          estimatePrompt: () => 80,
+        budgetProfile: {
+          tokenBudget: 100,
+          estimator: {
+            estimateMessage: () => 10,
+            estimatePrompt: () => 80,
+          },
         },
+        forceToolThresholdRatio: 0.7,
       });
       const state = makeState([
         { role: "system", content: "You are helpful." },

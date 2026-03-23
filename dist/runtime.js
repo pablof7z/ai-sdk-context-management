@@ -1,17 +1,18 @@
+import { createSystemReminderSink } from "ai-sdk-system-reminders";
 import { appendReminderToLatestUserMessage, clonePrompt, extractRequestContext } from "./prompt-utils.js";
 import { createDefaultPromptTokenEstimator } from "./token-estimator.js";
 import { CONTEXT_MANAGEMENT_KEY } from "./types.js";
 class StrategyState {
     requestContext;
     model;
-    reminderSink;
+    systemReminderSink;
     currentParams;
     removedByToolCallId = new Map();
     pinned = new Set();
-    constructor(params, requestContext, model, reminderSink) {
+    constructor(params, requestContext, model, systemReminderSink) {
         this.requestContext = requestContext;
         this.model = model;
-        this.reminderSink = reminderSink;
+        this.systemReminderSink = systemReminderSink;
         this.currentParams = {
             ...params,
             prompt: clonePrompt(params.prompt),
@@ -53,8 +54,8 @@ class StrategyState {
         }
     }
     async emitReminder(reminder) {
-        if (this.reminderSink) {
-            await this.reminderSink.emit(reminder, this.requestContext);
+        if (this.systemReminderSink) {
+            await this.systemReminderSink.emit(reminder, this.requestContext);
             return;
         }
         this.updatePrompt(appendReminderToLatestUserMessage(this.prompt, reminder.content));
@@ -76,6 +77,20 @@ function cloneUnknown(value) {
 }
 function countMessages(prompt) {
     return prompt.length;
+}
+function normalizeStrategyPayload(strategyName, payload) {
+    if (!payload || typeof payload !== "object" || payload === null) {
+        return undefined;
+    }
+    const candidate = payload;
+    if (typeof candidate.kind === "string") {
+        return cloneUnknown(payload);
+    }
+    return {
+        kind: "custom",
+        strategyName,
+        payload: cloneUnknown(candidate),
+    };
 }
 function extractRequestContextFromExperimentalContext(experimentalContext) {
     if (!experimentalContext ||
@@ -196,6 +211,9 @@ export function createContextManagementRuntime(options) {
     const estimator = options.estimator ?? createDefaultPromptTokenEstimator();
     const { tools, toolOwners } = mergeOptionalTools(strategies);
     const optionalTools = wrapOptionalTools(tools, toolOwners, options.telemetry);
+    const systemReminderSink = options.systemReminderContext
+        ? createSystemReminderSink(options.systemReminderContext)
+        : undefined;
     const middleware = {
         specificationVersion: "v3",
         async transformParams({ params, model }) {
@@ -206,7 +224,7 @@ export function createContextManagementRuntime(options) {
             const state = new StrategyState(params, requestContext, {
                 provider: model.provider,
                 modelId: model.modelId,
-            }, options.reminderSink);
+            }, systemReminderSink);
             const toolTokenOverhead = estimator.estimateTools?.(params.tools) ?? 0;
             const estimate = (prompt) => estimator.estimatePrompt(prompt) + toolTokenOverhead;
             const initialTokenEstimate = estimate(state.prompt);
@@ -250,9 +268,7 @@ export function createContextManagementRuntime(options) {
                     pinnedToolCallIdsDelta: pinnedAfter - pinnedBefore,
                     messageCountBefore,
                     messageCountAfter,
-                    payloads: {
-                        ...(execution?.payloads ? { strategy: cloneUnknown(execution.payloads) } : {}),
-                    },
+                    strategyPayload: normalizeStrategyPayload(strategy.name ?? "unnamed-strategy", execution?.payloads),
                 }));
             }
             await emitTelemetry(options.telemetry, () => ({

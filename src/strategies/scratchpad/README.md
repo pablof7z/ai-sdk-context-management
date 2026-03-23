@@ -54,6 +54,8 @@ The optional `scratchpad(...)` tool accepts:
 
 Entry names are intentionally open-ended. Agents can use any keys that fit the task, instead of being forced into a fixed schema.
 
+If you want scratchpad forcing to follow a managed working-budget instead of the raw request size, pass `budgetProfile` and `forceToolThresholdRatio` to `ScratchpadStrategy`.
+
 ## Good Entry Shapes
 
 - `objective`: what the agent is trying to accomplish right now

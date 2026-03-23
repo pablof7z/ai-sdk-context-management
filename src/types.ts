@@ -6,6 +6,7 @@ import type {
   LanguageModelV3ToolResultOutput,
 } from "@ai-sdk/provider";
 import type { LanguageModel, ToolSet } from "ai";
+import type { SystemReminderContext, SystemReminderEmission } from "ai-sdk-system-reminders";
 
 export const CONTEXT_MANAGEMENT_KEY = "contextManagement";
 
@@ -26,19 +27,7 @@ export interface RemovedToolExchange {
   reason: string;
 }
 
-export interface ContextManagementReminder {
-  kind: string;
-  content: string;
-  attributes?: Record<string, string>;
-  disposition?: "queue" | "defer";
-}
-
-export interface ContextManagementReminderSink {
-  emit(
-    reminder: ContextManagementReminder,
-    requestContext?: ContextManagementRequestContext
-  ): Promise<void> | void;
-}
+export type ContextManagementReminder = SystemReminderEmission;
 
 export interface ContextManagementStrategyState {
   readonly params: LanguageModelV3CallOptions;
@@ -51,14 +40,14 @@ export interface ContextManagementStrategyState {
   updateParams(patch: Partial<LanguageModelV3CallOptions>): void;
   addRemovedToolExchanges(exchanges: RemovedToolExchange[]): void;
   addPinnedToolCallIds(toolCallIds: string[]): void;
-  emitReminder(reminder: ContextManagementReminder): Promise<void>;
+  emitReminder(reminder: SystemReminderEmission): Promise<void>;
 }
 
 export interface ContextManagementStrategyExecution {
   outcome?: "applied" | "skipped";
   reason?: string;
   workingTokenBudget?: number;
-  payloads?: Record<string, unknown>;
+  payloads?: ContextManagementStrategyPayload | Record<string, unknown>;
 }
 
 export interface ContextManagementStrategy {
@@ -95,9 +84,7 @@ export interface ContextManagementStrategyCompleteEvent {
   pinnedToolCallIdsDelta: number;
   messageCountBefore: number;
   messageCountAfter: number;
-  payloads: {
-    strategy?: Record<string, unknown>;
-  };
+  strategyPayload?: ContextManagementStrategyPayload;
 }
 
 export interface ContextManagementToolExecuteStartEvent {
@@ -167,7 +154,7 @@ export interface CreateContextManagementRuntimeOptions {
   strategies: ContextManagementStrategy[];
   telemetry?: ContextManagementTelemetrySink;
   estimator?: PromptTokenEstimator;
-  reminderSink?: ContextManagementReminderSink;
+  systemReminderContext?: Pick<SystemReminderContext<unknown>, "queue" | "defer">;
 }
 
 export interface ContextManagementRuntime {
@@ -179,6 +166,13 @@ export interface PromptTokenEstimator {
   estimatePrompt(prompt: LanguageModelV3Prompt): number;
   estimateMessage(message: LanguageModelV3Message): number;
   estimateTools?(tools: LanguageModelV3CallOptions["tools"]): number;
+}
+
+export interface ContextBudgetProfile {
+  tokenBudget: number;
+  estimator: PromptTokenEstimator;
+  label?: string;
+  description?: string;
 }
 
 export interface DecayedToolContext {
@@ -210,15 +204,14 @@ export interface SystemPromptCachingStrategyOptions {
 }
 
 export interface ContextUtilizationReminderStrategyOptions {
-  workingTokenBudget: number;
+  budgetProfile: ContextBudgetProfile;
   warningThresholdRatio?: number;
-  estimator?: PromptTokenEstimator;
   mode?: "scratchpad" | "generic";
 }
 
 export interface ContextWindowStatusStrategyOptions {
-  workingTokenBudget?: number;
-  estimator?: PromptTokenEstimator;
+  budgetProfile?: ContextBudgetProfile;
+  requestEstimator?: PromptTokenEstimator;
   getContextWindow?: (options: {
     model?: ContextManagementModelRef;
     requestContext: ContextManagementRequestContext;
@@ -320,9 +313,8 @@ export interface ScratchpadStore {
 export interface ScratchpadStrategyOptions {
   scratchpadStore: ScratchpadStore;
   reminderTone?: "informational" | "urgent" | "silent";
-  workingTokenBudget?: number;
+  budgetProfile?: ContextBudgetProfile;
   forceToolThresholdRatio?: number;
-  estimator?: PromptTokenEstimator;
 }
 
 export interface ScratchpadToolInput {
@@ -337,3 +329,129 @@ export interface ScratchpadToolInput {
 export type ScratchpadToolResult =
   | { ok: true }
   | { ok: false; error: string };
+
+export interface SlidingWindowStrategyPayload {
+  kind: "sliding-window";
+  headCount: number;
+  keepLastMessages: number;
+  maxPromptTokens?: number;
+  messagesRemoved: number;
+}
+
+export interface SystemPromptCachingStrategyPayload {
+  kind: "system-prompt-caching";
+  consolidateSystemMessages: boolean;
+  systemMessageCountBefore: number;
+  systemMessageCountAfter: number;
+  taggedSystemMessageCount: number;
+}
+
+export interface ToolResultDecayStrategyPayload {
+  kind: "tool-result-decay";
+  currentPromptTokens: number;
+  truncatedMaxTokens: number;
+  placeholderFloorTokens: number;
+  pressureAnchors: ToolResultDecayPressureAnchor[];
+  warningForecastExtraTokens: number;
+  toolContextTokens?: number;
+  depthFactor?: number;
+  forecastToolContextTokens?: number;
+  forecastDepthFactor?: number;
+  truncatedCount?: number;
+  placeholderCount?: number;
+  inputTruncatedCount?: number;
+  inputPlaceholderCount?: number;
+  totalToolExchanges?: number;
+  warningCount?: number;
+  warningToolCallIds?: string[];
+  warningTruncateIds?: string[];
+  warningPlaceholderIds?: string[];
+}
+
+export interface ScratchpadStrategyPayload {
+  kind: "scratchpad";
+  entryCount: number;
+  entryCharCount: number;
+  preserveTurns?: number | null;
+  activeNoticeDescription?: string;
+  activeNoticeToolCallId?: string;
+  activeNoticeRawTurnCountAtCall?: number;
+  activeNoticeProjectedTurnCountAtCall?: number;
+  appliedOmitCount: number;
+  otherScratchpadCount: number;
+  reminderTone: "informational" | "urgent" | "silent";
+  estimatedTokens: number;
+  forceToolThresholdRatio?: number;
+  forceThresholdTokens?: number;
+  forcedToolChoice: boolean;
+  latestToolName?: string;
+}
+
+export interface SummarizationStrategyPayload {
+  kind: "summarization";
+  estimatedTokens: number;
+  preserveRecentMessages: number;
+  preservedMessageCount?: number;
+  messagesSummarizedCount?: number;
+  summaryCharCount?: number;
+}
+
+export interface ContextUtilizationReminderStrategyPayload {
+  kind: "context-utilization-reminder";
+  currentTokens: number;
+  warningThresholdTokens: number;
+  warningThresholdRatio: number;
+  utilizationPercent?: number;
+  mode: "scratchpad" | "generic";
+  budgetLabel: string;
+  budgetDescription?: string;
+  reminderText?: string;
+}
+
+export interface ContextWindowStatusStrategyPayload {
+  kind: "context-window-status";
+  estimatedPromptTokens: number;
+  estimatedMessageTokens: number;
+  estimatedToolTokens: number;
+  rawContextWindow?: number;
+  rawContextUtilizationPercent?: number;
+  budgetLabel?: string;
+  budgetDescription?: string;
+  budgetScopedTokens?: number;
+  staticOverheadTokens?: number;
+  workingTokenBudget?: number;
+  workingBudgetUtilizationPercent?: number;
+  reminderText: string;
+}
+
+export interface CompactionToolStrategyPayload {
+  kind: "compaction-tool";
+  keepLastMessages?: number;
+  storedSummary?: string;
+  messagesToSummarize?: LanguageModelV3Message[];
+  summaryText?: string;
+}
+
+export interface PinnedMessagesStrategyPayload {
+  kind: "pinned-messages";
+  pinnedToolCallIds: string[];
+  maxPinned: number;
+}
+
+export interface CustomStrategyPayload {
+  kind: "custom";
+  strategyName: string;
+  payload: Record<string, unknown>;
+}
+
+export type ContextManagementStrategyPayload =
+  | SlidingWindowStrategyPayload
+  | SystemPromptCachingStrategyPayload
+  | ToolResultDecayStrategyPayload
+  | ScratchpadStrategyPayload
+  | SummarizationStrategyPayload
+  | ContextUtilizationReminderStrategyPayload
+  | ContextWindowStatusStrategyPayload
+  | CompactionToolStrategyPayload
+  | PinnedMessagesStrategyPayload
+  | CustomStrategyPayload;

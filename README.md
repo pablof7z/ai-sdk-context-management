@@ -15,7 +15,7 @@ Every agent eventually runs into the same problem: the next model call cannot se
 ## Installation
 
 ```bash
-npm install ai @ai-sdk/provider ai-sdk-context-management
+npm install ai @ai-sdk/provider ai-sdk-context-management ai-sdk-system-reminders
 ```
 
 ## Quick Start
@@ -149,7 +149,7 @@ new ToolResultDecayStrategy({
 });
 ```
 
-Warnings are emitted through the reminder sink with machine-readable attributes:
+Warnings are emitted through the runtime reminder path, either into `systemReminderContext` or inline in the prompt, with machine-readable attributes:
 
 - `tool_call_ids`
 - `truncate_ids`
@@ -179,7 +179,7 @@ See [`examples/README.md`](./examples/README.md) for the full example index.
 
 ## Runtime API
 
-### `createContextManagementRuntime({ strategies, telemetry, estimator })`
+### `createContextManagementRuntime({ strategies, telemetry, estimator, systemReminderContext })`
 
 Returns:
 
@@ -187,6 +187,8 @@ Returns:
 - `optionalTools`
 
 The runtime merges tools from all strategies and throws on tool-name collisions.
+
+If `systemReminderContext` is provided, reminders are routed through `ai-sdk-system-reminders`. Otherwise, reminders are appended inline to the prompt.
 
 ## Scratchpad API
 

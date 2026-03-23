@@ -1,13 +1,13 @@
 import type { LanguageModelV3CallOptions, LanguageModelV3Middleware } from "@ai-sdk/provider";
 import type { ToolSet } from "ai";
+import { createSystemReminderSink } from "ai-sdk-system-reminders";
 import { appendReminderToLatestUserMessage, clonePrompt, extractRequestContext } from "./prompt-utils.js";
 import { createDefaultPromptTokenEstimator } from "./token-estimator.js";
 import { CONTEXT_MANAGEMENT_KEY } from "./types.js";
 import type {
+  ContextManagementStrategyPayload,
   ContextManagementModelRef,
   ContextManagementRequestContext,
-  ContextManagementReminder,
-  ContextManagementReminderSink,
   ContextManagementRuntime,
   ContextManagementStrategy,
   ContextManagementStrategyExecution,
@@ -27,7 +27,7 @@ class StrategyState implements ContextManagementStrategyState {
     params: LanguageModelV3CallOptions,
     public readonly requestContext: ContextManagementRequestContext,
     public readonly model?: ContextManagementModelRef,
-    private readonly reminderSink?: ContextManagementReminderSink
+    private readonly systemReminderSink?: ReturnType<typeof createSystemReminderSink>
   ) {
     this.currentParams = {
       ...params,
@@ -78,9 +78,9 @@ class StrategyState implements ContextManagementStrategyState {
     }
   }
 
-  async emitReminder(reminder: ContextManagementReminder): Promise<void> {
-    if (this.reminderSink) {
-      await this.reminderSink.emit(reminder, this.requestContext);
+  async emitReminder(reminder: import("ai-sdk-system-reminders").SystemReminderEmission): Promise<void> {
+    if (this.systemReminderSink) {
+      await this.systemReminderSink.emit(reminder, this.requestContext);
       return;
     }
 
@@ -106,6 +106,26 @@ function cloneUnknown<T>(value: T): T {
 
 function countMessages(prompt: LanguageModelV3CallOptions["prompt"]): number {
   return prompt.length;
+}
+
+function normalizeStrategyPayload(
+  strategyName: string,
+  payload: ContextManagementStrategyExecution["payloads"]
+): ContextManagementStrategyPayload | undefined {
+  if (!payload || typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  if (typeof candidate.kind === "string") {
+    return cloneUnknown(payload) as ContextManagementStrategyPayload;
+  }
+
+  return {
+    kind: "custom",
+    strategyName,
+    payload: cloneUnknown(candidate),
+  };
 }
 
 function extractRequestContextFromExperimentalContext(
@@ -260,6 +280,9 @@ export function createContextManagementRuntime(
   const estimator: PromptTokenEstimator = options.estimator ?? createDefaultPromptTokenEstimator();
   const { tools, toolOwners } = mergeOptionalTools(strategies);
   const optionalTools = wrapOptionalTools(tools, toolOwners, options.telemetry);
+  const systemReminderSink = options.systemReminderContext
+    ? createSystemReminderSink(options.systemReminderContext)
+    : undefined;
   const middleware: LanguageModelV3Middleware = {
     specificationVersion: "v3",
     async transformParams({ params, model }) {
@@ -272,7 +295,7 @@ export function createContextManagementRuntime(
       const state = new StrategyState(params, requestContext, {
         provider: model.provider,
         modelId: model.modelId,
-      }, options.reminderSink);
+      }, systemReminderSink);
       const toolTokenOverhead = estimator.estimateTools?.(params.tools) ?? 0;
       const estimate = (prompt: LanguageModelV3CallOptions["prompt"]) =>
         estimator.estimatePrompt(prompt) + toolTokenOverhead;
@@ -320,9 +343,10 @@ export function createContextManagementRuntime(
           pinnedToolCallIdsDelta: pinnedAfter - pinnedBefore,
           messageCountBefore,
           messageCountAfter,
-          payloads: {
-            ...(execution?.payloads ? { strategy: cloneUnknown(execution.payloads) } : {}),
-          },
+          strategyPayload: normalizeStrategyPayload(
+            strategy.name ?? "unnamed-strategy",
+            execution?.payloads
+          ),
         }));
       }
 

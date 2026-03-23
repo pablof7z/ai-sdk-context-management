@@ -1,10 +1,13 @@
-import { createDefaultPromptTokenEstimator } from "../../token-estimator.js";
+import {
+  estimateBudgetProfileTokens,
+  normalizeContextBudgetProfile,
+  type NormalizedContextBudgetProfile,
+} from "../../context-budget-profile.js";
 import type {
   ContextManagementStrategy,
   ContextManagementStrategyExecution,
   ContextManagementStrategyState,
   ContextUtilizationReminderStrategyOptions,
-  PromptTokenEstimator,
 } from "../../types.js";
 
 const DEFAULT_WARNING_THRESHOLD_RATIO = 0.7;
@@ -14,22 +17,35 @@ function buildReminder(options: {
   warningThresholdTokens: number;
   utilizationPercent: number;
   mode: "scratchpad" | "generic";
+  budgetLabel: string;
+  budgetDescription?: string;
 }): string {
-  const { currentTokens, warningThresholdTokens, utilizationPercent, mode } = options;
+  const {
+    currentTokens,
+    warningThresholdTokens,
+    utilizationPercent,
+    mode,
+    budgetLabel,
+    budgetDescription,
+  } = options;
 
   const lines = [
-    `[Context utilization: ~${utilizationPercent}% of working budget]`,
-    `Current prompt tokens: ~${currentTokens}. Warning threshold: ~${warningThresholdTokens}.`,
+    `[Context utilization: ~${utilizationPercent}% of ${budgetLabel}]`,
+    `Current ${budgetLabel} tokens: ~${currentTokens}. Warning threshold: ~${warningThresholdTokens}.`,
   ];
 
+  if (budgetDescription) {
+    lines.push(budgetDescription);
+  }
+
   if (mode === "scratchpad") {
-    lines.push("Your working context is getting tight. Use scratchpad(...) now to:");
+    lines.push(`Your ${budgetLabel} is getting tight. Use scratchpad(...) now to:`);
     lines.push("- Rewrite your current working state so it reflects what matters now");
     lines.push("- Update key/value entries and notes for current progress, findings, and next steps");
     lines.push("- Omit stale tool call IDs you no longer need");
     lines.push("- Reduce preserveTurns if the preserved head/tail turns are larger than necessary");
   } else {
-    lines.push("Your working context is getting tight. Trim or summarize stale context before continuing.");
+    lines.push(`Your ${budgetLabel} is getting tight. Trim or summarize stale context before continuing.`);
   }
 
   lines.push("[/Context utilization]");
@@ -38,45 +54,51 @@ function buildReminder(options: {
 
 export class ContextUtilizationReminderStrategy implements ContextManagementStrategy {
   readonly name = "context-utilization-reminder";
-  private readonly workingTokenBudget: number;
+  private readonly budgetProfile: NormalizedContextBudgetProfile;
   private readonly warningThresholdRatio: number;
-  private readonly estimator: PromptTokenEstimator;
   private readonly mode: "scratchpad" | "generic";
 
   constructor(options: ContextUtilizationReminderStrategyOptions) {
-    this.workingTokenBudget = Math.max(1, Math.floor(options.workingTokenBudget));
+    this.budgetProfile = normalizeContextBudgetProfile(options.budgetProfile)!;
     this.warningThresholdRatio = Math.min(
       1,
       Math.max(0, options.warningThresholdRatio ?? DEFAULT_WARNING_THRESHOLD_RATIO)
     );
-    this.estimator = options.estimator ?? createDefaultPromptTokenEstimator();
     this.mode = options.mode ?? "generic";
   }
 
   async apply(state: ContextManagementStrategyState): Promise<ContextManagementStrategyExecution> {
-    const currentTokens = this.estimator.estimatePrompt(state.prompt)
-      + (this.estimator.estimateTools?.(state.params?.tools) ?? 0);
-    const warningThresholdTokens = Math.floor(this.workingTokenBudget * this.warningThresholdRatio);
+    const currentTokens = estimateBudgetProfileTokens(
+      this.budgetProfile,
+      state.prompt,
+      state.params?.tools
+    );
+    const warningThresholdTokens = Math.floor(this.budgetProfile.tokenBudget * this.warningThresholdRatio);
 
     if (currentTokens < warningThresholdTokens) {
       return {
         reason: "below-warning-threshold",
-        workingTokenBudget: this.workingTokenBudget,
+        workingTokenBudget: this.budgetProfile.tokenBudget,
         payloads: {
+          kind: "context-utilization-reminder",
           currentTokens,
           warningThresholdTokens,
           warningThresholdRatio: this.warningThresholdRatio,
           mode: this.mode,
+          budgetLabel: this.budgetProfile.label,
+          budgetDescription: this.budgetProfile.description,
         },
       };
     }
 
-    const utilizationPercent = Math.round((currentTokens / this.workingTokenBudget) * 100);
+    const utilizationPercent = Math.round((currentTokens / this.budgetProfile.tokenBudget) * 100);
     const reminderText = buildReminder({
       currentTokens,
       warningThresholdTokens,
       utilizationPercent,
       mode: this.mode,
+      budgetLabel: this.budgetProfile.label,
+      budgetDescription: this.budgetProfile.description,
     });
 
     await state.emitReminder({
@@ -86,13 +108,16 @@ export class ContextUtilizationReminderStrategy implements ContextManagementStra
 
     return {
       reason: "warning-injected",
-      workingTokenBudget: this.workingTokenBudget,
+      workingTokenBudget: this.budgetProfile.tokenBudget,
       payloads: {
+        kind: "context-utilization-reminder",
         currentTokens,
         warningThresholdTokens,
         warningThresholdRatio: this.warningThresholdRatio,
         utilizationPercent,
         mode: this.mode,
+        budgetLabel: this.budgetProfile.label,
+        budgetDescription: this.budgetProfile.description,
         reminderText,
       },
     };

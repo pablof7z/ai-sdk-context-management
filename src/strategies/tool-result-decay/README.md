@@ -14,7 +14,7 @@ Compresses tool outputs by age and tool-context pressure while preserving the su
 - recent observations stay detailed
 - old reasoning chains remain understandable
 - pressure ramps up only when tool inputs and outputs actually consume significant context
-- reminder sinks can receive a forecast of which tool-call IDs are next at risk
+- reminder delivery can surface a forecast of which tool-call IDs are next at risk
 
 ## Decay Shape
 
@@ -47,7 +47,7 @@ So very small tool payloads can survive for many turns, around `~5k` tool tokens
 
 ## Reminder Attributes
 
-When a reminder sink is configured, decay warnings include:
+When reminder delivery is enabled, decay warnings include:
 
 - `tool_call_ids`
 - `truncate_ids`

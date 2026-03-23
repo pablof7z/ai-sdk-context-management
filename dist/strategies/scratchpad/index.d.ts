@@ -4,7 +4,7 @@ export declare class ScratchpadStrategy implements ContextManagementStrategy {
     readonly name = "scratchpad";
     private readonly scratchpadStore;
     private readonly reminderTone;
-    private readonly workingTokenBudget?;
+    private readonly budgetProfile?;
     private readonly forceToolThresholdRatio?;
     private readonly estimator;
     private readonly optionalTools;

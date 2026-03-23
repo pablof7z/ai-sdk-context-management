@@ -67,6 +67,7 @@ export class SummarizationStrategy implements ContextManagementStrategy {
         reason: "below-token-threshold",
         workingTokenBudget: this.maxPromptTokens,
         payloads: {
+          kind: "summarization",
           estimatedTokens,
           preserveRecentMessages: this.preserveRecentMessages,
         },
@@ -89,6 +90,7 @@ export class SummarizationStrategy implements ContextManagementStrategy {
         reason: "no-summarizable-messages",
         workingTokenBudget: this.maxPromptTokens,
         payloads: {
+          kind: "summarization",
           estimatedTokens,
           preserveRecentMessages: this.preserveRecentMessages,
           preservedMessageCount: preservedMessages.length,
@@ -141,6 +143,7 @@ export class SummarizationStrategy implements ContextManagementStrategy {
       reason: "history-summarized",
       workingTokenBudget: this.maxPromptTokens,
       payloads: {
+        kind: "summarization",
         estimatedTokens,
         preserveRecentMessages: this.preserveRecentMessages,
         messagesSummarizedCount: messagesToSummarize.length,

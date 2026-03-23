@@ -36,10 +36,12 @@ describe("context management runtime integration", () => {
           reminderTone: "informational",
         }),
         new ContextUtilizationReminderStrategy({
-          workingTokenBudget: 100,
+          budgetProfile: {
+            tokenBudget: 100,
+            estimator,
+          },
           warningThresholdRatio: 0.7,
           mode: "scratchpad",
-          estimator,
         }),
       ],
       telemetry: async (event) => {

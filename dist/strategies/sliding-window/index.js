@@ -29,6 +29,7 @@ export class SlidingWindowStrategy {
                 : "window-evaluated",
             workingTokenBudget: this.maxPromptTokens,
             payloads: {
+                kind: "sliding-window",
                 headCount: this.headCount,
                 keepLastMessages: this.keepLastMessages,
                 maxPromptTokens: this.maxPromptTokens,

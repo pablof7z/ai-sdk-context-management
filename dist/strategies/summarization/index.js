@@ -37,6 +37,7 @@ export class SummarizationStrategy {
                 reason: "below-token-threshold",
                 workingTokenBudget: this.maxPromptTokens,
                 payloads: {
+                    kind: "summarization",
                     estimatedTokens,
                     preserveRecentMessages: this.preserveRecentMessages,
                 },
@@ -49,6 +50,7 @@ export class SummarizationStrategy {
                 reason: "no-summarizable-messages",
                 workingTokenBudget: this.maxPromptTokens,
                 payloads: {
+                    kind: "summarization",
                     estimatedTokens,
                     preserveRecentMessages: this.preserveRecentMessages,
                     preservedMessageCount: preservedMessages.length,
@@ -92,6 +94,7 @@ export class SummarizationStrategy {
             reason: "history-summarized",
             workingTokenBudget: this.maxPromptTokens,
             payloads: {
+                kind: "summarization",
                 estimatedTokens,
                 preserveRecentMessages: this.preserveRecentMessages,
                 messagesSummarizedCount: messagesToSummarize.length,

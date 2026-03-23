@@ -50,6 +50,7 @@ export class PinnedMessagesStrategy implements ContextManagementStrategy {
     return {
       reason: pinnedIds.length > 0 ? "pinned-tool-results-loaded" : "no-pinned-tool-results",
       payloads: {
+        kind: "pinned-messages",
         pinnedToolCallIds: pinnedIds,
         maxPinned: this.maxPinned,
       },

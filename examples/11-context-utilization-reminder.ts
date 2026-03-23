@@ -6,6 +6,7 @@ import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/prov
 import {
   ContextUtilizationReminderStrategy,
   createContextManagementRuntime,
+  createDefaultPromptTokenEstimator,
 } from "ai-sdk-context-management";
 import {
   DEMO_CONTEXT,
@@ -29,10 +30,14 @@ function getUserText(message: LanguageModelV3Message): string {
 }
 
 async function main() {
+  const estimator = createDefaultPromptTokenEstimator();
   const runtime = createContextManagementRuntime({
     strategies: [
       new ContextUtilizationReminderStrategy({
-        workingTokenBudget: 40,
+        budgetProfile: {
+          tokenBudget: 40,
+          estimator,
+        },
         warningThresholdRatio: 0.5,
         mode: "generic",
       }),

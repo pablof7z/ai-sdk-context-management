@@ -33,6 +33,7 @@ export class PinnedMessagesStrategy {
         return {
             reason: pinnedIds.length > 0 ? "pinned-tool-results-loaded" : "no-pinned-tool-results",
             payloads: {
+                kind: "pinned-messages",
                 pinnedToolCallIds: pinnedIds,
                 maxPinned: this.maxPinned,
             },

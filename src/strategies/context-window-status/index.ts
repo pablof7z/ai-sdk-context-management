@@ -1,3 +1,8 @@
+import {
+  estimateBudgetProfileTokens,
+  normalizeContextBudgetProfile,
+  type NormalizedContextBudgetProfile,
+} from "../../context-budget-profile.js";
 import { createDefaultPromptTokenEstimator } from "../../token-estimator.js";
 import type {
   ContextManagementStrategy,
@@ -21,9 +26,13 @@ function formatPercent(numerator: number, denominator: number): number {
 
 function buildReminder(options: {
   estimatedRequestTokens: number;
-  estimatedMessageTokens?: number;
-  estimatedToolTokens?: number;
+  estimatedMessageTokens: number;
+  estimatedToolTokens: number;
   rawContextWindow?: number;
+  budgetLabel?: string;
+  budgetDescription?: string;
+  budgetScopedTokens?: number;
+  staticOverheadTokens?: number;
   workingTokenBudget?: number;
 }): string {
   const {
@@ -31,6 +40,10 @@ function buildReminder(options: {
     estimatedMessageTokens,
     estimatedToolTokens,
     rawContextWindow,
+    budgetLabel,
+    budgetDescription,
+    budgetScopedTokens,
+    staticOverheadTokens,
     workingTokenBudget,
   } = options;
   const lines = [
@@ -38,11 +51,19 @@ function buildReminder(options: {
     `Current request after context management: ~${formatNumber(estimatedRequestTokens)} tokens.`,
   ];
 
-  if (
-    estimatedMessageTokens !== undefined
-    && estimatedToolTokens !== undefined
-    && estimatedToolTokens > 0
-  ) {
+  if (budgetScopedTokens !== undefined) {
+    lines.push(
+      `${budgetLabel ?? "Working budget"} context: ~${formatNumber(budgetScopedTokens)} tokens.`
+    );
+  }
+
+  if (staticOverheadTokens !== undefined && staticOverheadTokens > 0) {
+    lines.push(
+      `Static overhead outside the ${budgetLabel ?? "working budget"}: ~${formatNumber(staticOverheadTokens)} tokens.`
+    );
+  }
+
+  if (estimatedToolTokens > 0) {
     lines.push(
       `Breakdown: ~${formatNumber(estimatedMessageTokens)} message tokens + ~${formatNumber(estimatedToolTokens)} tool-definition tokens.`
     );
@@ -50,8 +71,12 @@ function buildReminder(options: {
 
   if (workingTokenBudget !== undefined) {
     lines.push(
-      `Working budget target: ~${formatNumber(workingTokenBudget)} tokens (~${formatPercent(estimatedRequestTokens, workingTokenBudget)}% used).`
+      `${budgetLabel ?? "Working budget"} target: ~${formatNumber(workingTokenBudget)} tokens (~${formatPercent(budgetScopedTokens ?? estimatedRequestTokens, workingTokenBudget)}% used).`
     );
+  }
+
+  if (budgetDescription) {
+    lines.push(budgetDescription);
   }
 
   if (rawContextWindow !== undefined) {
@@ -66,34 +91,37 @@ function buildReminder(options: {
 
 export class ContextWindowStatusStrategy implements ContextManagementStrategy {
   readonly name = "context-window-status";
-  private readonly workingTokenBudget?: number;
-  private readonly estimator: PromptTokenEstimator;
+  private readonly budgetProfile?: NormalizedContextBudgetProfile;
+  private readonly requestEstimator: PromptTokenEstimator;
   private readonly getContextWindow?: ContextWindowStatusStrategyOptions["getContextWindow"];
 
   constructor(options: ContextWindowStatusStrategyOptions = {}) {
-    this.workingTokenBudget = typeof options.workingTokenBudget === "number"
-      && Number.isFinite(options.workingTokenBudget)
-      && options.workingTokenBudget > 0
-      ? Math.floor(options.workingTokenBudget)
-      : undefined;
-    this.estimator = options.estimator ?? createDefaultPromptTokenEstimator();
+    this.budgetProfile = normalizeContextBudgetProfile(options.budgetProfile);
+    this.requestEstimator = options.requestEstimator ?? createDefaultPromptTokenEstimator();
     this.getContextWindow = options.getContextWindow;
   }
 
   async apply(state: ContextManagementStrategyState): Promise<ContextManagementStrategyExecution> {
-    const estimatedMessageTokens = this.estimator.estimatePrompt(state.prompt);
-    const estimatedToolTokens = this.estimator.estimateTools?.(state.params?.tools) ?? 0;
+    const estimatedMessageTokens = this.requestEstimator.estimatePrompt(state.prompt);
+    const estimatedToolTokens = this.requestEstimator.estimateTools?.(state.params?.tools) ?? 0;
     const estimatedRequestTokens = estimatedMessageTokens + estimatedToolTokens;
     const rawContextWindow = this.getContextWindow?.({
       model: state.model,
       requestContext: state.requestContext,
     });
+    const budgetScopedTokens = this.budgetProfile
+      ? estimateBudgetProfileTokens(this.budgetProfile, state.prompt, state.params?.tools)
+      : undefined;
+    const staticOverheadTokens = budgetScopedTokens !== undefined
+      ? Math.max(0, estimatedRequestTokens - budgetScopedTokens)
+      : undefined;
 
-    if (this.workingTokenBudget === undefined && rawContextWindow === undefined) {
+    if (this.budgetProfile === undefined && rawContextWindow === undefined) {
       return {
         outcome: "skipped",
         reason: "no-context-capacity-data",
         payloads: {
+          kind: "context-window-status",
           estimatedPromptTokens: estimatedRequestTokens,
           estimatedMessageTokens,
           estimatedToolTokens,
@@ -106,7 +134,11 @@ export class ContextWindowStatusStrategy implements ContextManagementStrategy {
       estimatedMessageTokens,
       estimatedToolTokens,
       rawContextWindow,
-      workingTokenBudget: this.workingTokenBudget,
+      budgetLabel: this.budgetProfile?.label,
+      budgetDescription: this.budgetProfile?.description,
+      budgetScopedTokens,
+      staticOverheadTokens,
+      workingTokenBudget: this.budgetProfile?.tokenBudget,
     });
 
     await state.emitReminder({
@@ -116,10 +148,11 @@ export class ContextWindowStatusStrategy implements ContextManagementStrategy {
 
     return {
       reason: "context-window-status-injected",
-      ...(this.workingTokenBudget !== undefined
-        ? { workingTokenBudget: this.workingTokenBudget }
+      ...(this.budgetProfile !== undefined
+        ? { workingTokenBudget: this.budgetProfile.tokenBudget }
         : {}),
       payloads: {
+        kind: "context-window-status",
         estimatedPromptTokens: estimatedRequestTokens,
         estimatedMessageTokens,
         estimatedToolTokens,
@@ -127,9 +160,13 @@ export class ContextWindowStatusStrategy implements ContextManagementStrategy {
         rawContextUtilizationPercent: rawContextWindow !== undefined
           ? formatPercent(estimatedRequestTokens, rawContextWindow)
           : undefined,
-        workingTokenBudget: this.workingTokenBudget,
-        workingBudgetUtilizationPercent: this.workingTokenBudget !== undefined
-          ? formatPercent(estimatedRequestTokens, this.workingTokenBudget)
+        budgetLabel: this.budgetProfile?.label,
+        budgetDescription: this.budgetProfile?.description,
+        budgetScopedTokens,
+        staticOverheadTokens,
+        workingTokenBudget: this.budgetProfile?.tokenBudget,
+        workingBudgetUtilizationPercent: this.budgetProfile !== undefined && budgetScopedTokens !== undefined
+          ? formatPercent(budgetScopedTokens, this.budgetProfile.tokenBudget)
           : undefined,
         reminderText,
       },

@@ -66,10 +66,12 @@ async function main() {
         reminderTone: "informational",
       }),
       new ContextUtilizationReminderStrategy({
-        workingTokenBudget: 200,
+        budgetProfile: {
+          tokenBudget: 200,
+          estimator,
+        },
         warningThresholdRatio: 0.6,
         mode: "scratchpad",
-        estimator,
       }),
     ],
     estimator,

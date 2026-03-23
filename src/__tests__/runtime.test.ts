@@ -1,5 +1,6 @@
 import type { ContextManagementTelemetryEvent } from "../index.js";
 import { createContextManagementRuntime, ScratchpadStrategy, SlidingWindowStrategy } from "../index.js";
+import { createSystemReminderContext } from "ai-sdk-system-reminders";
 import { InMemoryScratchpadStore, makePrompt } from "./helpers.js";
 
 describe("createContextManagementRuntime", () => {
@@ -332,7 +333,7 @@ describe("createContextManagementRuntime", () => {
   });
 
   test("emits structured reminders to a sink instead of mutating the prompt", async () => {
-    const reminders: Array<{ kind: string; content: string }> = [];
+    const reminderContext = createSystemReminderContext();
     const runtime = createContextManagementRuntime({
       strategies: [
         {
@@ -345,14 +346,7 @@ describe("createContextManagementRuntime", () => {
           },
         },
       ],
-      reminderSink: {
-        emit(reminder) {
-          reminders.push({
-            kind: reminder.kind,
-            content: reminder.content,
-          });
-        },
-      },
+      systemReminderContext: reminderContext,
     });
 
     const prompt = makePrompt();
@@ -376,10 +370,10 @@ describe("createContextManagementRuntime", () => {
       },
     } as any);
 
-    expect(result?.prompt).toEqual(prompt);
-    expect(reminders).toEqual([
+    expect(result?.prompt.map((message) => message.role)).toEqual(prompt.map((message) => message.role));
+    expect(await reminderContext.collect()).toEqual([
       {
-        kind: "custom-reminder",
+        type: "custom-reminder",
         content: "check the working set",
       },
     ]);

@@ -1,4 +1,5 @@
 import { getLatestToolActivity, projectScratchpadPrompt, removeToolExchanges, } from "../../prompt-utils.js";
+import { estimateBudgetProfileTokens, normalizeContextBudgetProfile, } from "../../context-budget-profile.js";
 import { createDefaultPromptTokenEstimator } from "../../token-estimator.js";
 import { createScratchpadTool } from "./tools/scratchpad.js";
 import { countEntryChars, indentMultiline, normalizeScratchpadState, renderScratchpadState, } from "./state.js";
@@ -45,29 +46,24 @@ export class ScratchpadStrategy {
     name = "scratchpad";
     scratchpadStore;
     reminderTone;
-    workingTokenBudget;
+    budgetProfile;
     forceToolThresholdRatio;
-    estimator;
+    estimator = createDefaultPromptTokenEstimator();
     optionalTools;
     forcedOnLastApply = false;
     constructor(options) {
-        const normalizedWorkingTokenBudget = typeof options.workingTokenBudget === "number"
-            && Number.isFinite(options.workingTokenBudget)
-            && options.workingTokenBudget > 0
-            ? Math.floor(options.workingTokenBudget)
-            : undefined;
+        const normalizedBudgetProfile = normalizeContextBudgetProfile(options.budgetProfile);
         const normalizedForceThresholdRatio = typeof options.forceToolThresholdRatio === "number"
             && Number.isFinite(options.forceToolThresholdRatio)
             ? Math.min(1, Math.max(0, options.forceToolThresholdRatio))
             : undefined;
-        if (normalizedForceThresholdRatio !== undefined && normalizedWorkingTokenBudget === undefined) {
-            throw new Error("ScratchpadStrategy forceToolThresholdRatio requires workingTokenBudget");
+        if (normalizedForceThresholdRatio !== undefined && normalizedBudgetProfile === undefined) {
+            throw new Error("ScratchpadStrategy forceToolThresholdRatio requires budgetProfile");
         }
         this.scratchpadStore = options.scratchpadStore;
         this.reminderTone = options.reminderTone ?? "informational";
-        this.workingTokenBudget = normalizedWorkingTokenBudget;
+        this.budgetProfile = normalizedBudgetProfile;
         this.forceToolThresholdRatio = normalizedForceThresholdRatio;
-        this.estimator = options.estimator ?? createDefaultPromptTokenEstimator();
         this.optionalTools = {
             scratchpad: createScratchpadTool({
                 scratchpadStore: this.scratchpadStore,
@@ -102,11 +98,13 @@ export class ScratchpadStrategy {
             preserveTurns: currentState.preserveTurns,
             notice: currentState.activeNotice,
         }));
-        const estimatedTokens = this.estimator.estimatePrompt(state.prompt)
-            + (this.estimator.estimateTools?.(state.params?.tools) ?? 0);
+        const estimatedTokens = this.budgetProfile
+            ? estimateBudgetProfileTokens(this.budgetProfile, state.prompt, state.params?.tools)
+            : this.estimator.estimatePrompt(state.prompt)
+                + (this.estimator.estimateTools?.(state.params?.tools) ?? 0);
         const forceThresholdTokens = this.forceToolThresholdRatio !== undefined
-            && this.workingTokenBudget !== undefined
-            ? Math.floor(this.workingTokenBudget * this.forceToolThresholdRatio)
+            && this.budgetProfile !== undefined
+            ? Math.floor(this.budgetProfile.tokenBudget * this.forceToolThresholdRatio)
             : undefined;
         const alreadyForcedToScratchpad = state.params?.toolChoice?.type === "tool"
             && state.params?.toolChoice?.toolName === "scratchpad";
@@ -140,8 +138,9 @@ export class ScratchpadStrategy {
             reason: shouldForceToolChoice
                 ? "scratchpad-rendered-and-tool-forced"
                 : "scratchpad-rendered",
-            ...(this.workingTokenBudget !== undefined ? { workingTokenBudget: this.workingTokenBudget } : {}),
+            ...(this.budgetProfile !== undefined ? { workingTokenBudget: this.budgetProfile.tokenBudget } : {}),
             payloads: {
+                kind: "scratchpad",
                 entryCount: Object.keys(currentState.entries ?? {}).length,
                 entryCharCount: countEntryChars(currentState.entries),
                 preserveTurns: currentState.preserveTurns,

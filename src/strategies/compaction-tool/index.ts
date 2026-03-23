@@ -116,6 +116,7 @@ export class CompactionToolStrategy implements ContextManagementStrategy {
         return {
           reason: "stored-compaction-summary-injected",
           payloads: {
+            kind: "compaction-tool",
             storedSummary,
           },
         };
@@ -143,6 +144,7 @@ export class CompactionToolStrategy implements ContextManagementStrategy {
       return {
         reason: "no-summarizable-messages",
         payloads: {
+          kind: "compaction-tool",
           keepLastMessages: this.keepLastMessages,
         },
       };
@@ -178,6 +180,7 @@ export class CompactionToolStrategy implements ContextManagementStrategy {
     return {
       reason: "context-compacted",
       payloads: {
+        kind: "compaction-tool",
         keepLastMessages: this.keepLastMessages,
         messagesToSummarize,
         summaryText,

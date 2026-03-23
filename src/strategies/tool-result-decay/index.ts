@@ -333,6 +333,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         reason: "below-token-threshold",
         workingTokenBudget: this.maxPromptTokens,
         payloads: {
+          kind: "tool-result-decay",
           currentPromptTokens,
           truncatedMaxTokens: this.truncatedMaxTokens,
           placeholderFloorTokens: this.placeholderFloorTokens,
@@ -349,6 +350,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         reason: "no-tool-exchanges",
         workingTokenBudget: this.maxPromptTokens,
         payloads: {
+          kind: "tool-result-decay",
           currentPromptTokens,
           truncatedMaxTokens: this.truncatedMaxTokens,
           placeholderFloorTokens: this.placeholderFloorTokens,
@@ -513,6 +515,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         reason: "tool-results-decayed",
         workingTokenBudget: this.maxPromptTokens,
         payloads: {
+          kind: "tool-result-decay",
           currentPromptTokens,
           toolContextTokens,
           depthFactor,
@@ -616,6 +619,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       reason: "tool-results-decayed",
       workingTokenBudget: this.maxPromptTokens,
       payloads: {
+        kind: "tool-result-decay",
         currentPromptTokens,
         toolContextTokens,
         depthFactor,

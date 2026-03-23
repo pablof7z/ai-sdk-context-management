@@ -3,15 +3,19 @@ import type { ContextManagementTelemetryEvent } from "../index.js";
 import { appendReminderToLatestUserMessage } from "../prompt-utils.js";
 import { makePrompt } from "./helpers.js";
 
+const estimator = {
+  estimateMessage: () => 1,
+  estimatePrompt: () => 100,
+};
+
 describe("ContextUtilizationReminderStrategy", () => {
   test("no-ops below threshold", async () => {
     const strategy = new ContextUtilizationReminderStrategy({
-      workingTokenBudget: 10_000,
-      warningThresholdRatio: 0.7,
-      estimator: {
-        estimateMessage: () => 1,
-        estimatePrompt: () => 100,
+      budgetProfile: {
+        tokenBudget: 10_000,
+        estimator,
       },
+      warningThresholdRatio: 0.7,
     });
 
     const prompt = makePrompt();
@@ -38,10 +42,13 @@ describe("ContextUtilizationReminderStrategy", () => {
       reason: "below-warning-threshold",
       workingTokenBudget: 10000,
       payloads: {
+        kind: "context-utilization-reminder",
         currentTokens: 100,
         warningThresholdTokens: 7000,
         warningThresholdRatio: 0.7,
         mode: "generic",
+        budgetLabel: "working budget",
+        budgetDescription: undefined,
       },
     });
   });
@@ -51,13 +58,15 @@ describe("ContextUtilizationReminderStrategy", () => {
     const runtime = createContextManagementRuntime({
       strategies: [
         new ContextUtilizationReminderStrategy({
-          workingTokenBudget: 100,
+          budgetProfile: {
+            tokenBudget: 100,
+            estimator: {
+              estimateMessage: () => 40,
+              estimatePrompt: () => 80,
+            },
+          },
           warningThresholdRatio: 0.7,
           mode: "scratchpad",
-          estimator: {
-            estimateMessage: () => 40,
-            estimatePrompt: () => 80,
-          },
         }),
       ],
       telemetry: async (event) => {
@@ -97,12 +106,14 @@ describe("ContextUtilizationReminderStrategy", () => {
     if (strategyEvent?.type === "strategy-complete") {
       expect(strategyEvent.reason).toBe("warning-injected");
       expect(strategyEvent.workingTokenBudget).toBe(100);
-      expect(strategyEvent.payloads.strategy).toEqual(
+      expect(strategyEvent.strategyPayload).toEqual(
         expect.objectContaining({
+          kind: "context-utilization-reminder",
           currentTokens: 80,
           warningThresholdTokens: 70,
           utilizationPercent: 80,
           mode: "scratchpad",
+          budgetLabel: "working budget",
           reminderText: expect.stringContaining("Use scratchpad(...) now"),
         })
       );
@@ -111,10 +122,12 @@ describe("ContextUtilizationReminderStrategy", () => {
 
   test("inserts a tagged system reminder when there is no user message to append to", async () => {
     const strategy = new ContextUtilizationReminderStrategy({
-      workingTokenBudget: 10,
-      estimator: {
-        estimateMessage: () => 1,
-        estimatePrompt: () => 24,
+      budgetProfile: {
+        tokenBudget: 10,
+        estimator: {
+          estimateMessage: () => 1,
+          estimatePrompt: () => 24,
+        },
       },
     });
 
@@ -160,7 +173,7 @@ describe("ContextUtilizationReminderStrategy", () => {
     ]);
     expect(state.prompt[1]).toEqual({
       role: "system",
-      content: expect.stringContaining("Your working context is getting tight."),
+      content: expect.stringContaining("Your working budget is getting tight."),
       providerOptions: {
         contextManagement: {
           type: "reminder",
