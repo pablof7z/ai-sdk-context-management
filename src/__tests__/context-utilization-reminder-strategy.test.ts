@@ -100,6 +100,8 @@ describe("ContextUtilizationReminderStrategy", () => {
     } as any);
 
     expect(JSON.stringify(transformed?.prompt)).toContain("Use scratchpad(...) now");
+    expect(JSON.stringify(transformed?.prompt)).toContain("Capture user requirements, constraints, and completion state");
+    expect(JSON.stringify(transformed?.prompt)).toContain("If a preserved request could look unresolved later");
 
     const strategyEvent = events.find((event) => event.type === "strategy-complete");
     expect(strategyEvent).toBeDefined();
@@ -117,6 +119,7 @@ describe("ContextUtilizationReminderStrategy", () => {
           reminderText: expect.stringContaining("Use scratchpad(...) now"),
         })
       );
+      expect(strategyEvent.strategyPayload.reminderText).toContain("Capture user requirements, constraints, and completion state");
     }
   });
 

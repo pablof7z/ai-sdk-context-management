@@ -35,7 +35,7 @@ function extractRequestContextFromExperimentalContext(experimentalContext) {
 }
 export function createScratchpadTool(options) {
     return tool({
-        description: "Manage your working memory and context window. Every call must include a short description of what you are doing. Use key/value entries to keep the current working state for this run. Multiline values are fine, and common keys include objective, findings, notes, side-effects, and next-steps. Prefer rewriting stale state over keeping a chronological log. Use preserveTurns and omitToolCallIds to free context when it grows too large.\n\nIMPORTANT: Before pruning context, record in your scratchpad any actions you took that had side effects (file writes, API calls, published events, state changes) so you don't forget or repeat them.\n\npreserveTurns keeps the first N and last N user/assistant turns from before this scratchpad call, removes the middle, and hides tool use from the visible transcript.",
+        description: "Manage your working memory and context window. Every call must include a short description of what you are doing. Use key/value entries to keep the current working state for this run. Multiline values are fine, and common keys include objective, requirements, findings, notes, side-effects, completion-state, and next-steps. Prefer rewriting stale state over keeping a chronological log. Use preserveTurns and omitToolCallIds to free context when it grows too large.\n\nIMPORTANT: Before pruning context, record in your scratchpad any actions you took that had side effects (file writes, API calls, published events, state changes), along with user requirements, constraints, and completion state (what is already done, what must not be repeated, and what is still pending).\n\npreserveTurns keeps the first N and last N user/assistant turns from before this scratchpad call and removes the middle. Preserved turns keep their raw messages, including tool calls and tool results that occurred inside those turns. Anything in the trimmed middle disappears from the visible transcript, so save what you still need first.",
         inputSchema: jsonSchema({
             type: "object",
             additionalProperties: false,
@@ -52,7 +52,7 @@ export function createScratchpadTool(options) {
                     additionalProperties: {
                         type: "string",
                     },
-                    description: "Merge key/value entries into your scratchpad. Use any keys that fit the task, such as objective, thesis, findings, notes, side-effects, or next-steps.",
+                    description: "Merge key/value entries into your scratchpad. Use any keys that fit the task, such as objective, requirements, findings, notes, side-effects, completion-state, or next-steps.",
                 },
                 replaceEntries: {
                     type: "object",
@@ -78,7 +78,7 @@ export function createScratchpadTool(options) {
                             type: "null",
                         },
                     ],
-                    description: "Number of semantic turns to keep from both the head and tail of the pre-scratchpad visible transcript. Only user messages and assistant text replies are preserved in this view. Use null to clear.",
+                    description: "Number of turns to keep from both the head and tail of the pre-scratchpad visible transcript. Preserved turns keep their raw messages, including tool calls and tool results inside those turns. Use null to clear.",
                 },
                 omitToolCallIds: {
                     type: "array",

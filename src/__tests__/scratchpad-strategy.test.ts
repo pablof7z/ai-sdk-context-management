@@ -190,6 +190,17 @@ describe("ScratchpadStrategy", () => {
     ).rejects.toThrow();
   });
 
+  test("scratchpad tool description explains preserving requirements and completion state before pruning", () => {
+    const store = new InMemoryScratchpadStore();
+    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+    const scratchpadTool = strategy.getOptionalTools?.().scratchpad as { description?: string };
+
+    expect(scratchpadTool.description).toContain("user requirements");
+    expect(scratchpadTool.description).toContain("completion state");
+    expect(scratchpadTool.description).toContain("must not be repeated");
+    expect(scratchpadTool.description).toContain("Preserved turns keep their raw messages");
+  });
+
   test("applies explicit omissions and injects attributed reminders", async () => {
     const store = new InMemoryScratchpadStore();
     await store.set(
@@ -283,6 +294,167 @@ describe("ScratchpadStrategy", () => {
     expect(latestUserReminderText(configuredState.prompt)).toContain(
       "If helpful, common scratchpad keys include: objective, findings, notes, side-effects, and next-steps. Use any keys that fit the work."
     );
+  });
+
+  test("does not compact or hide tool history before scratchpad has ever been used", async () => {
+    const store = new InMemoryScratchpadStore();
+    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+    const state = makeState(makePrompt());
+
+    await strategy.apply(state as never);
+
+    expect(state.prompt.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "assistant",
+      "tool",
+      "user",
+    ]);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "assistant"
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-old")
+      )
+    ).toBe(true);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "tool"
+        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-old")
+      )
+    ).toBe(true);
+  });
+
+  test("replaces the scratchpad exchange with a notice without dropping later tool messages when preserveTurns is unset", async () => {
+    const store = new InMemoryScratchpadStore();
+    await store.set(
+      { conversationId: "conv-1", agentId: "agent-1" },
+      {
+        entries: {
+          notes: "Saved working state",
+        },
+        activeNotice: {
+          description: "Saved working state",
+          toolCallId: "scratchpad-call-1",
+          rawTurnCountAtCall: 2,
+          projectedTurnCountAtCall: 2,
+        },
+        omitToolCallIds: [],
+      }
+    );
+
+    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+    const state = makeState([
+      { role: "system", content: "You are helpful." },
+      user("1"),
+      assistantText("ok, 1"),
+      user("2"),
+      assistantText("ok, 2"),
+      assistantToolCall("scratchpad-call-1", "scratchpad"),
+      toolResult("scratchpad-call-1", "scratchpad", "{\"ok\":true}"),
+      user("3"),
+      assistantToolCall("call-3", "fs_read"),
+      toolResult("call-3", "fs_read", "file contents"),
+      assistantText("ok, 3"),
+    ]);
+
+    await strategy.apply(state as never);
+
+    expect(visibleSequence(state.prompt)).toEqual([
+      "system:You are helpful.",
+      "user:1",
+      "assistant:ok, 1",
+      "user:2",
+      "assistant:ok, 2",
+      "assistant:<system-reminder>[scratchpad used: Saved working state]</system-reminder>",
+      "user:3",
+      "assistant:ok, 3",
+    ]);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "assistant"
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-3")
+      )
+    ).toBe(true);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "tool"
+        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-3")
+      )
+    ).toBe(true);
+    expect(JSON.stringify(state.prompt)).not.toContain("scratchpad-call-1");
+  });
+
+  test("keeps preserved head and tail turns as raw messages, including tool exchanges", async () => {
+    const store = new InMemoryScratchpadStore();
+    await store.set(
+      { conversationId: "conv-1", agentId: "agent-1" },
+      {
+        preserveTurns: 1,
+        activeNotice: {
+          description: "Compacting around tool work",
+          toolCallId: "scratchpad-call-1",
+          rawTurnCountAtCall: 4,
+          projectedTurnCountAtCall: 2,
+        },
+        omitToolCallIds: [],
+      }
+    );
+
+    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+    const state = makeState([
+      { role: "system", content: "You are helpful." },
+      user("1"),
+      assistantText("ok, 1"),
+      user("2"),
+      assistantText("about to inspect 2"),
+      assistantToolCall("call-2", "fs_read"),
+      toolResult("call-2", "fs_read", "contents-2"),
+      assistantText("ok, 2"),
+      user("3"),
+      assistantText("ok, 3"),
+      user("4"),
+      assistantText("about to inspect 4"),
+      assistantToolCall("call-4", "fs_read"),
+      toolResult("call-4", "fs_read", "contents-4"),
+      assistantText("ok, 4"),
+    ]);
+
+    await strategy.apply(state as never);
+
+    expect(visibleSequence(state.prompt)).toEqual([
+      "system:You are helpful.",
+      "user:1",
+      "assistant:ok, 1",
+      "assistant:<system-reminder>[scratchpad used: Compacting around tool work]</system-reminder>",
+      "user:4",
+      "assistant:about to inspect 4",
+      "assistant:ok, 4",
+    ]);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "assistant"
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-4")
+      )
+    ).toBe(true);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "tool"
+        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-4")
+      )
+    ).toBe(true);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "assistant"
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-2")
+      )
+    ).toBe(false);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "tool"
+        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-2")
+      )
+    ).toBe(false);
   });
 
   test("projects semantic head and tail turns, pairing assistant text across intervening tool messages", async () => {
@@ -463,7 +635,7 @@ describe("ScratchpadStrategy", () => {
     ]);
   });
 
-  test("pinned tool exchanges are not counted as omitted even though tool use is hidden by turn projection", async () => {
+  test("pinned tool exchanges are not counted as omitted and remain visible when their turn is preserved", async () => {
     const store = new InMemoryScratchpadStore();
     await store.set(
       { conversationId: "conv-1", agentId: "agent-1" },
@@ -484,7 +656,18 @@ describe("ScratchpadStrategy", () => {
     await strategy.apply(state as never);
 
     expect(state.removedToolExchanges.map((exchange) => exchange.toolCallId)).not.toContain("call-old");
-    expect(state.prompt.some((message) => message.role === "tool")).toBe(false);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "assistant"
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-old")
+      )
+    ).toBe(true);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "tool"
+        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-old")
+      )
+    ).toBe(true);
   });
 
   test("forces scratchpad tool choice once the configured threshold is crossed", async () => {
@@ -738,6 +921,7 @@ describe("ScratchpadStrategy", () => {
       const reminderText = latestUserReminderText(state.prompt);
       expect(reminderText).toContain("CRITICAL: Context is nearly full");
       expect(reminderText).toContain("Record side-effect actions in your scratchpad");
+      expect(reminderText).toContain("Record user requirements, constraints, and completion state");
       expect(reminderText).toContain("Set preserveTurns to compact older turns");
       expect(reminderText).toContain("Failure to free context will result in an error");
     });

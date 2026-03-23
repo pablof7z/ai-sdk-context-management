@@ -31,6 +31,12 @@ type ScratchpadSemanticTurn = {
   assistant?: Extract<LanguageModelV3Message, { role: "assistant" }>;
 };
 
+type ScratchpadTurnSpan = {
+  startIndex: number;
+  endIndex: number;
+  hasAssistantText: boolean;
+};
+
 function cloneUnknown<T>(value: T): T {
   if (value === undefined || value === null) {
     return value;
@@ -246,11 +252,109 @@ function flattenScratchpadTurns(turns: readonly ScratchpadSemanticTurn[]): Langu
   return prompt;
 }
 
+function extractScratchpadTurnSpans(prompt: LanguageModelV3Prompt): ScratchpadTurnSpan[] {
+  const spans: ScratchpadTurnSpan[] = [];
+  let openSpan: ScratchpadTurnSpan | undefined;
+
+  for (const [index, message] of prompt.entries()) {
+    if (message.role === "system" || isScratchpadUseNoticeMessage(message)) {
+      continue;
+    }
+
+    if (message.role === "user") {
+      if (openSpan) {
+        spans.push({
+          ...openSpan,
+          endIndex: index,
+        });
+      }
+
+      openSpan = {
+        startIndex: index,
+        endIndex: prompt.length,
+        hasAssistantText: false,
+      };
+      continue;
+    }
+
+    if (!openSpan) {
+      continue;
+    }
+
+    if (message.role === "assistant" && hasTextContent(message)) {
+      openSpan = {
+        ...openSpan,
+        hasAssistantText: true,
+      };
+    }
+  }
+
+  if (openSpan) {
+    spans.push(openSpan);
+  }
+
+  return spans;
+}
+
+function flattenScratchpadTurnSpans(
+  prompt: LanguageModelV3Prompt,
+  spans: readonly ScratchpadTurnSpan[]
+): LanguageModelV3Prompt {
+  return spans.flatMap((span) =>
+    clonePrompt(prompt.slice(span.startIndex, span.endIndex))
+  );
+}
+
 function getUnmatchedTurnTail(
   turns: readonly ScratchpadSemanticTurn[]
 ): ScratchpadSemanticTurn[] {
   const latestTurn = turns.at(-1);
   return latestTurn && latestTurn.assistant === undefined ? [latestTurn] : [];
+}
+
+function getUnmatchedTurnSpanTail(
+  spans: readonly ScratchpadTurnSpan[]
+): ScratchpadTurnSpan[] {
+  const latestSpan = spans.at(-1);
+  return latestSpan && !latestSpan.hasAssistantText ? [latestSpan] : [];
+}
+
+function removeScratchpadUseNotices(prompt: LanguageModelV3Prompt): LanguageModelV3Prompt {
+  return clonePrompt(prompt).filter((message) => !isScratchpadUseNoticeMessage(message));
+}
+
+function compactScratchpadTurns(
+  prompt: LanguageModelV3Prompt,
+  preserveTurns?: number | null
+): LanguageModelV3Prompt {
+  const systemMessages = prompt
+    .filter((message) => message.role === "system")
+    .map((message) => cloneMessage(message));
+  const turnSpans = extractScratchpadTurnSpans(prompt);
+  const normalizedPreserveTurns = typeof preserveTurns === "number" && Number.isFinite(preserveTurns)
+    ? Math.max(0, Math.floor(preserveTurns))
+    : undefined;
+
+  if (normalizedPreserveTurns === undefined) {
+    return clonePrompt(prompt);
+  }
+
+  let preservedHeadTurnSpans = turnSpans;
+  let preservedTailTurnSpans: ScratchpadTurnSpan[] = [];
+
+  if (normalizedPreserveTurns === 0) {
+    preservedHeadTurnSpans = [];
+    preservedTailTurnSpans = getUnmatchedTurnSpanTail(turnSpans);
+  } else if (turnSpans.length > normalizedPreserveTurns * 2) {
+    preservedHeadTurnSpans = turnSpans.slice(0, normalizedPreserveTurns);
+    preservedTailTurnSpans = turnSpans.slice(turnSpans.length - normalizedPreserveTurns);
+  }
+
+  return [
+    ...systemMessages,
+    ...flattenScratchpadTurnSpans(prompt, preservedHeadTurnSpans),
+    ...flattenScratchpadTurnSpans(prompt, preservedTailTurnSpans),
+  ];
 }
 
 export function buildScratchpadUseNoticeText(description: string): string {
@@ -334,38 +438,73 @@ export function projectScratchpadPrompt(
     notice?: ScratchpadUseNotice;
   }
 ): LanguageModelV3Prompt {
-  const systemMessages = prompt
+  if (!options.notice) {
+    return clonePrompt(prompt);
+  }
+
+  const promptWithoutNotices = removeScratchpadUseNotices(prompt);
+  const noticeMessage = buildScratchpadUseNoticeMessage(options.notice.description);
+  const exchanges = collectToolExchanges(promptWithoutNotices);
+  const noticeExchange = exchanges.get(options.notice.toolCallId);
+
+  if (noticeExchange?.callMessageIndex !== undefined) {
+    const exchangeMessageIndices = [
+      noticeExchange.callMessageIndex,
+      ...noticeExchange.resultMessageIndices,
+    ];
+    const afterNoticeIndex = exchangeMessageIndices.length > 0
+      ? Math.max(...exchangeMessageIndices) + 1
+      : noticeExchange.callMessageIndex + 1;
+    const preNoticePrompt = promptWithoutNotices.slice(0, noticeExchange.callMessageIndex);
+    const postNoticePrompt = promptWithoutNotices.slice(afterNoticeIndex);
+
+    return [
+      ...compactScratchpadTurns(preNoticePrompt, options.preserveTurns),
+      noticeMessage,
+      ...clonePrompt(postNoticePrompt),
+    ];
+  }
+
+  const systemMessages = promptWithoutNotices
     .filter((message) => message.role === "system")
     .map((message) => cloneMessage(message));
-  const turns = extractScratchpadSemanticTurns(prompt);
-  const preTurnCount = options.notice
-    ? Math.min(Math.max(0, Math.floor(options.notice.rawTurnCountAtCall)), turns.length)
-    : turns.length;
-  const preTurns = turns.slice(0, preTurnCount);
-  const futureTurns = turns.slice(preTurnCount);
+  const turnSpans = extractScratchpadTurnSpans(promptWithoutNotices);
+  const preTurnCount = Math.min(
+    Math.max(0, Math.floor(options.notice.rawTurnCountAtCall)),
+    turnSpans.length
+  );
+  const preTurnSpans = turnSpans.slice(0, preTurnCount);
+  const futureTurnSpans = turnSpans.slice(preTurnCount);
   const normalizedPreserveTurns = typeof options.preserveTurns === "number" && Number.isFinite(options.preserveTurns)
     ? Math.max(0, Math.floor(options.preserveTurns))
     : undefined;
 
-  let preservedHeadTurns = preTurns;
-  let preservedTailTurns: ScratchpadSemanticTurn[] = [];
+  if (normalizedPreserveTurns === undefined) {
+    return [
+      ...systemMessages,
+      ...flattenScratchpadTurnSpans(promptWithoutNotices, preTurnSpans),
+      noticeMessage,
+      ...flattenScratchpadTurnSpans(promptWithoutNotices, futureTurnSpans),
+    ];
+  }
 
-  if (normalizedPreserveTurns !== undefined) {
-    if (normalizedPreserveTurns === 0) {
-      preservedHeadTurns = [];
-      preservedTailTurns = getUnmatchedTurnTail(preTurns);
-    } else if (preTurns.length > normalizedPreserveTurns * 2) {
-      preservedHeadTurns = preTurns.slice(0, normalizedPreserveTurns);
-      preservedTailTurns = preTurns.slice(preTurns.length - normalizedPreserveTurns);
-    }
+  let preservedHeadTurnSpans = preTurnSpans;
+  let preservedTailTurnSpans: ScratchpadTurnSpan[] = [];
+
+  if (normalizedPreserveTurns === 0) {
+    preservedHeadTurnSpans = [];
+    preservedTailTurnSpans = getUnmatchedTurnSpanTail(preTurnSpans);
+  } else if (preTurnSpans.length > normalizedPreserveTurns * 2) {
+    preservedHeadTurnSpans = preTurnSpans.slice(0, normalizedPreserveTurns);
+    preservedTailTurnSpans = preTurnSpans.slice(preTurnSpans.length - normalizedPreserveTurns);
   }
 
   return [
     ...systemMessages,
-    ...flattenScratchpadTurns(preservedHeadTurns),
-    ...(options.notice ? [buildScratchpadUseNoticeMessage(options.notice.description)] : []),
-    ...flattenScratchpadTurns(preservedTailTurns),
-    ...flattenScratchpadTurns(futureTurns),
+    ...flattenScratchpadTurnSpans(promptWithoutNotices, preservedHeadTurnSpans),
+    noticeMessage,
+    ...flattenScratchpadTurnSpans(promptWithoutNotices, preservedTailTurnSpans),
+    ...flattenScratchpadTurnSpans(promptWithoutNotices, futureTurnSpans),
   ];
 }
 

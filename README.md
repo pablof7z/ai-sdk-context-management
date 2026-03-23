@@ -200,10 +200,10 @@ The tool supports:
 - `setEntries`: merge key/value entries into the scratchpad
 - `replaceEntries`: replace all key/value entries
 - `removeEntryKeys`: delete specific entries by key
-- `preserveTurns`: keep the first `N` and last `N` user/assistant turns from before this `scratchpad(...)` call, trimming only the middle and excluding tool use from the visible transcript
+- `preserveTurns`: keep the first `N` and last `N` user/assistant turns from before this `scratchpad(...)` call, trimming only the middle while preserving the raw messages inside those kept turns
 - `omitToolCallIds`: remove completed tool exchanges after the important parts have been captured
 
-Entry names are intentionally unconstrained. Common choices are `objective`, `thesis`, `findings`, `notes`, `side-effects`, and `next-steps`, but the agent can use whatever keys match the task.
+Entry names are intentionally unconstrained. Common choices are `objective`, `requirements`, `findings`, `notes`, `side-effects`, `completion-state`, and `next-steps`, but the agent can use whatever keys match the task.
 
 Hosts can also pass `emptyStateGuidance` to `ScratchpadStrategy` if they want to inject host-specific empty-scratchpad hints. The library does not add those hints by default.
 

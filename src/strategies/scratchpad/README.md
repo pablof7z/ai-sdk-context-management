@@ -26,8 +26,8 @@ This is the strategy to use when you want the agent to actively manage its own c
 On each turn, the strategy reads the persisted scratchpad state for the current agent and conversation. It can then:
 
 - hide old tool exchanges the agent previously marked as safe to omit
-- re-project the visible transcript as user turns plus assistant text replies, excluding tool use
 - compact the pre-scratchpad history by keeping only the first and last preserved turns
+- keep the raw messages inside those preserved turns, including tool calls and tool results that belong to them
 - inject the agent's current working state back into the prompt as a reminder block
 
 The key idea is that the scratchpad is not a chronological log. It is a living state snapshot that the model keeps rewriting as the task evolves.
@@ -49,7 +49,7 @@ The optional `scratchpad(...)` tool accepts:
 - `setEntries`: merge key/value entries into the scratchpad
 - `replaceEntries`: replace the entire key/value map
 - `removeEntryKeys`: delete specific keys
-- `preserveTurns`: keep the first `N` and last `N` semantic turns from before this `scratchpad(...)` call while trimming only the middle
+- `preserveTurns`: keep the first `N` and last `N` semantic turns from before this `scratchpad(...)` call while trimming only the middle; the kept turns stay as raw message slices, including tool calls/results inside them
 - `omitToolCallIds`: remove completed tool exchanges after their important parts are captured
 
 Entry names are intentionally open-ended. Agents can use any keys that fit the task, instead of being forced into a fixed schema.
@@ -60,9 +60,11 @@ If your host wants to show custom empty-state key suggestions, pass `emptyStateG
 ## Good Entry Shapes
 
 - `objective`: what the agent is trying to accomplish right now
+- `requirements`: exact user requests, constraints, and success criteria
 - `findings`: durable facts learned from tools or inspection
 - `notes`: multiline freeform context when a single sentence is not enough
 - `side-effects`: actions already taken that should not be repeated
+- `completion-state`: what is already done, what must not be repeated, and what is still pending
 - `next-steps`: what to do next without re-deriving the plan
 
 ## Recommended Usage Pattern
@@ -71,6 +73,8 @@ If your host wants to show custom empty-state key suggestions, pass `emptyStateG
 - rewrite stale entries instead of appending forever
 - move important facts out of raw tool output and into entries
 - once an insight is captured, omit the stale tool exchange from active context
+- capture requirements, constraints, and completion state before pruning
+- if a preserved request could look unresolved later, keep the satisfying turn or record clearly that it is already done and must not be repeated
 - use `preserveTurns` when the scratchpad is good enough that the model only needs the head and tail turns around the current pruning point
 
 ## When To Reach For It
