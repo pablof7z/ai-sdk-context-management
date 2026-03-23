@@ -195,9 +195,11 @@ describe("ScratchpadStrategy", () => {
     const strategy = new ScratchpadStrategy({ scratchpadStore: store });
     const scratchpadTool = strategy.getOptionalTools?.().scratchpad as { description?: string };
 
+    expect(scratchpadTool.description).toContain("proactively and often");
     expect(scratchpadTool.description).toContain("user requirements");
     expect(scratchpadTool.description).toContain("completion state");
     expect(scratchpadTool.description).toContain("must not be repeated");
+    expect(scratchpadTool.description).toContain("instead of leaving it around just in case");
     expect(scratchpadTool.description).toContain("Preserved turns keep their raw messages");
   });
 
@@ -257,7 +259,7 @@ describe("ScratchpadStrategy", () => {
     expect(reminderText).toContain("Other agent scratchpads:");
     expect(reminderText).toContain("- Beta:");
     expect(reminderText).toContain("findings: I already inspected the CLI wiring.");
-    expect(reminderText).toContain("Use scratchpad(...) proactively to keep this working state current.");
+    expect(reminderText).toContain("Use scratchpad(...) proactively and often to keep this working state current.");
     expect(result).toEqual({
       reason: "scratchpad-rendered",
       payloads: expect.objectContaining({
@@ -280,7 +282,7 @@ describe("ScratchpadStrategy", () => {
 
     const defaultReminderText = latestUserReminderText(defaultState.prompt);
     expect(defaultReminderText).not.toContain("Suggested entry names for this run:");
-    expect(defaultReminderText).toContain("Use scratchpad(...) proactively to keep this working state current.");
+    expect(defaultReminderText).toContain("Use scratchpad(...) proactively and often to keep this working state current.");
 
     const configuredStore = new InMemoryScratchpadStore();
     const configuredStrategy = new ScratchpadStrategy({

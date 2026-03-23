@@ -36,10 +36,10 @@ function buildReminderBlock(options) {
             && emptyStateGuidanceLines.length > 0) {
             lines.push(...emptyStateGuidanceLines);
         }
-        lines.push("Use scratchpad(...) proactively to keep this working state current. Prefer rewriting stale entries over keeping a chronological log. Capture user requirements, constraints, and completion state before you prune. Scratchpad entries persist within this conversation only — they do not carry over to new conversations.");
+        lines.push("Use scratchpad(...) proactively and often to keep this working state current. Do not wait for context pressure. Prefer rewriting stale entries over keeping a chronological log. Capture user requirements, constraints, and completion state before you prune. Once the scratchpad safely carries what you need, prune stale transcript instead of leaving it around just in case. Scratchpad entries persist within this conversation only — they do not carry over to new conversations.");
     }
     else if (reminderTone === "urgent") {
-        lines.push("Use scratchpad(...) now to rewrite your current working state, capture requirements and completion state, preserve progress within this conversation, or proactively remove stale context. Scratchpad entries do not carry over to new conversations.");
+        lines.push("Use scratchpad(...) now to rewrite your current working state, capture requirements and completion state, preserve progress within this conversation, and remove stale transcript that no longer deserves attention. Scratchpad entries do not carry over to new conversations.");
     }
     return lines.join("\n");
 }
