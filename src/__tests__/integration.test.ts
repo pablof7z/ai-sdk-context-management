@@ -150,7 +150,7 @@ describe("context management runtime integration", () => {
       )
     ).toBe(false);
     expect(JSON.stringify(secondPrompt)).toContain("Track parser follow-up");
-    expect(JSON.stringify(secondPrompt)).toContain("Use scratchpad(...) now");
+    expect(JSON.stringify(secondPrompt)).toContain("scratchpad(...) is available for context compaction");
     expect(events.some((event) =>
       event.type === "strategy-complete" &&
       event.strategyName === "context-utilization-reminder" &&

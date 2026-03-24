@@ -55,27 +55,7 @@ The optional `scratchpad(...)` tool accepts:
 Entry names are intentionally open-ended. Agents can use any keys that fit the task, instead of being forced into a fixed schema.
 
 If you want scratchpad forcing to follow a managed working-budget instead of the raw request size, pass `budgetProfile` and `forceToolThresholdRatio` to `ScratchpadStrategy`.
-If your host wants to show custom empty-state key suggestions, pass `emptyStateGuidance` to `ScratchpadStrategy`. The library does not inject those suggestions by default.
-
-## Good Entry Shapes
-
-- `objective`: what the agent is trying to accomplish right now
-- `requirements`: exact user requests, constraints, and success criteria
-- `findings`: durable facts learned from tools or inspection
-- `notes`: multiline freeform context when a single sentence is not enough
-- `side-effects`: actions already taken that should not be repeated
-- `completion-state`: what is already done, what must not be repeated, and what is still pending
-- `next-steps`: what to do next without re-deriving the plan
-
-## Recommended Usage Pattern
-
-- treat the scratchpad as current state, not a log of every action
-- rewrite stale entries instead of appending forever
-- move important facts out of raw tool output and into entries
-- once an insight is captured, omit the stale tool exchange from active context
-- capture requirements, constraints, and completion state before pruning
-- if a preserved request could look unresolved later, keep the satisfying turn or record clearly that it is already done and must not be repeated
-- use `preserveTurns` when the scratchpad is good enough that the model only needs the head and tail turns around the current pruning point
+If your host wants to show custom empty-state key suggestions or behavioral guidance, pass `emptyStateGuidance` to `ScratchpadStrategy`. The library does not inject that guidance by default.
 
 ## When To Reach For It
 

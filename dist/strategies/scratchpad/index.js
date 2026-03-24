@@ -29,17 +29,16 @@ function buildReminderBlock(options) {
         }
     }
     if (forced) {
-        lines.push("CRITICAL: Context is nearly full. You MUST:", "1. Record side-effect actions in your scratchpad entries", "2. Record user requirements, constraints, and completion state so preserved turns do not look unresolved", "3. Set preserveTurns to compact older turns (e.g. 2-4)", "4. Add completed tool call IDs to omitToolCallIds", "Failure to free context will result in an error.");
+        lines.push("CRITICAL: Context is nearly full. You MUST:", "1. Update scratchpad entries to match the current state you want preserved", "2. Set preserveTurns to compact older turns (e.g. 2-4)", "3. Add completed tool call IDs to omitToolCallIds", "Failure to free context will result in an error.");
     }
     else if (reminderTone === "informational") {
         if ((currentState.entries === undefined || Object.keys(currentState.entries).length === 0)
             && emptyStateGuidanceLines.length > 0) {
             lines.push(...emptyStateGuidanceLines);
         }
-        lines.push("Use scratchpad(...) proactively and often to keep this working state current. Do not wait for context pressure. Prefer rewriting stale entries over keeping a chronological log. Capture user requirements, constraints, and completion state before you prune. Once the scratchpad safely carries what you need, prune stale transcript instead of leaving it around just in case. Scratchpad entries persist within this conversation only — they do not carry over to new conversations.");
     }
     else if (reminderTone === "urgent") {
-        lines.push("Use scratchpad(...) now to rewrite your current working state, capture requirements and completion state, preserve progress within this conversation, and remove stale transcript that no longer deserves attention. Scratchpad entries do not carry over to new conversations.");
+        lines.push("Context is tight. scratchpad(...) can update persisted entries and free visible context with preserveTurns and omitToolCallIds.");
     }
     return lines.join("\n");
 }

@@ -99,9 +99,9 @@ describe("ContextUtilizationReminderStrategy", () => {
       },
     } as any);
 
-    expect(JSON.stringify(transformed?.prompt)).toContain("Use scratchpad(...) now");
-    expect(JSON.stringify(transformed?.prompt)).toContain("Capture user requirements, constraints, and completion state");
-    expect(JSON.stringify(transformed?.prompt)).toContain("If a preserved request could look unresolved later");
+    expect(JSON.stringify(transformed?.prompt)).toContain("scratchpad(...) is available for context compaction");
+    expect(JSON.stringify(transformed?.prompt)).toContain("omitToolCallIds removes completed tool exchanges");
+    expect(JSON.stringify(transformed?.prompt)).toContain("preserveTurns keeps only the head and tail turns");
 
     const strategyEvent = events.find((event) => event.type === "strategy-complete");
     expect(strategyEvent).toBeDefined();
@@ -116,10 +116,10 @@ describe("ContextUtilizationReminderStrategy", () => {
           utilizationPercent: 80,
           mode: "scratchpad",
           budgetLabel: "working budget",
-          reminderText: expect.stringContaining("Use scratchpad(...) now"),
+          reminderText: expect.stringContaining("scratchpad(...) is available for context compaction"),
         })
       );
-      expect(strategyEvent.strategyPayload.reminderText).toContain("Capture user requirements, constraints, and completion state");
+      expect(strategyEvent.strategyPayload.reminderText).toContain("omitToolCallIds removes completed tool exchanges");
     }
   });
 

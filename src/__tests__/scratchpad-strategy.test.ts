@@ -190,17 +190,17 @@ describe("ScratchpadStrategy", () => {
     ).rejects.toThrow();
   });
 
-  test("scratchpad tool description explains preserving requirements and completion state before pruning", () => {
+  test("scratchpad tool description stays focused on scratchpad mechanics", () => {
     const store = new InMemoryScratchpadStore();
     const strategy = new ScratchpadStrategy({ scratchpadStore: store });
     const scratchpadTool = strategy.getOptionalTools?.().scratchpad as { description?: string };
 
-    expect(scratchpadTool.description).toContain("proactively and often");
-    expect(scratchpadTool.description).toContain("user requirements");
-    expect(scratchpadTool.description).toContain("completion state");
-    expect(scratchpadTool.description).toContain("must not be repeated");
-    expect(scratchpadTool.description).toContain("instead of leaving it around just in case");
+    expect(scratchpadTool.description).toContain("Persist scratchpad state");
+    expect(scratchpadTool.description).toContain("preserveTurns");
+    expect(scratchpadTool.description).toContain("omitToolCallIds");
     expect(scratchpadTool.description).toContain("Preserved turns keep their raw messages");
+    expect(scratchpadTool.description).not.toContain("proactively and often");
+    expect(scratchpadTool.description).not.toContain("user requirements");
   });
 
   test("applies explicit omissions and injects attributed reminders", async () => {
@@ -259,7 +259,7 @@ describe("ScratchpadStrategy", () => {
     expect(reminderText).toContain("Other agent scratchpads:");
     expect(reminderText).toContain("- Beta:");
     expect(reminderText).toContain("findings: I already inspected the CLI wiring.");
-    expect(reminderText).toContain("Use scratchpad(...) proactively and often to keep this working state current.");
+    expect(reminderText).not.toContain("Use scratchpad(...) proactively and often");
     expect(result).toEqual({
       reason: "scratchpad-rendered",
       payloads: expect.objectContaining({
@@ -282,7 +282,8 @@ describe("ScratchpadStrategy", () => {
 
     const defaultReminderText = latestUserReminderText(defaultState.prompt);
     expect(defaultReminderText).not.toContain("Suggested entry names for this run:");
-    expect(defaultReminderText).toContain("Use scratchpad(...) proactively and often to keep this working state current.");
+    expect(defaultReminderText).toContain("Your scratchpad (Alpha):");
+    expect(defaultReminderText).not.toContain("Use scratchpad(...) proactively and often");
 
     const configuredStore = new InMemoryScratchpadStore();
     const configuredStrategy = new ScratchpadStrategy({
@@ -922,8 +923,7 @@ describe("ScratchpadStrategy", () => {
 
       const reminderText = latestUserReminderText(state.prompt);
       expect(reminderText).toContain("CRITICAL: Context is nearly full");
-      expect(reminderText).toContain("Record side-effect actions in your scratchpad");
-      expect(reminderText).toContain("Record user requirements, constraints, and completion state");
+      expect(reminderText).toContain("Update scratchpad entries to match the current state you want preserved");
       expect(reminderText).toContain("Set preserveTurns to compact older turns");
       expect(reminderText).toContain("Failure to free context will result in an error");
     });

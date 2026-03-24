@@ -39,12 +39,10 @@ function buildReminder(options: {
   }
 
   if (mode === "scratchpad") {
-    lines.push(`Your ${budgetLabel} is getting tight. Use scratchpad(...) now to:`);
-    lines.push("- Rewrite your current working state so it reflects what matters now");
-    lines.push("- Capture user requirements, constraints, and completion state");
-    lines.push("- Omit stale tool call IDs you no longer need");
-    lines.push("- Reduce preserveTurns if the preserved head/tail turns are larger than necessary");
-    lines.push("- If a preserved request could look unresolved later, keep its satisfying turn or record clearly that it is already done and must not be repeated");
+    lines.push(`Your ${budgetLabel} is getting tight. scratchpad(...) is available for context compaction:`);
+    lines.push("- setEntries or replaceEntries update persisted scratchpad state");
+    lines.push("- omitToolCallIds removes completed tool exchanges from visible context");
+    lines.push("- preserveTurns keeps only the head and tail turns around the pruning point");
   } else {
     lines.push(`Your ${budgetLabel} is getting tight. Trim or summarize stale context before continuing.`);
   }
