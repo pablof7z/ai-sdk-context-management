@@ -39,36 +39,21 @@ describe("ContextWindowStatusStrategy", () => {
       },
     });
 
-    const transformed = await runtime.middleware.transformParams?.({
-      params: {
-        prompt: makePrompt(),
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
+    const transformed = await runtime.prepareRequest({
+      requestContext: {
+        conversationId: "conv-1",
+        agentId: "agent-1",
       },
+      messages: makePrompt(),
       model: {
-        specificationVersion: "v3",
         provider: "openrouter",
         modelId: "anthropic/claude-4",
-        supportedUrls: {},
-        doGenerate: async () => {
-          throw new Error("unused");
-        },
-        doStream: async () => {
-          throw new Error("unused");
-        },
       },
-    } as any);
+    });
 
-    expect(JSON.stringify(transformed?.prompt)).toContain("Current request after context management: ~150 tokens.");
-    expect(JSON.stringify(transformed?.prompt)).toContain("managed working budget context: ~80 tokens.");
-    expect(JSON.stringify(transformed?.prompt)).toContain("Static overhead outside the managed working budget: ~70 tokens.");
-    expect(JSON.stringify(transformed?.prompt)).toContain("Breakdown: ~120 message tokens + ~30 tool-definition tokens.");
-    expect(JSON.stringify(transformed?.prompt)).toContain("managed working budget target: ~400 tokens (~20% used).");
-    expect(JSON.stringify(transformed?.prompt)).toContain("Raw model context window: ~200,000 tokens (~0% used).");
+    const promptJson = JSON.stringify(transformed.messages);
+    expect(promptJson).toContain("managed working budget: 20% (~80/400 tokens).");
+    expect(promptJson).toContain("Model window: 0% (~150/200,000 tokens).");
 
     const strategyEvent = events.find((event) => event.type === "strategy-complete");
     expect(strategyEvent).toBeDefined();
@@ -84,7 +69,7 @@ describe("ContextWindowStatusStrategy", () => {
           staticOverheadTokens: 70,
           rawContextWindow: 200_000,
           workingTokenBudget: 400,
-          reminderText: expect.stringContaining("Current request after context management"),
+          reminderText: expect.stringContaining("managed working budget: 20%"),
         })
       );
     }

@@ -40,7 +40,6 @@ function buildReminderBlock(options: {
   currentState: ScratchpadState;
   currentContext: ContextManagementRequestContext;
   otherScratchpads: ScratchpadConversationEntry[];
-  reminderTone: "informational" | "urgent" | "silent";
   emptyStateGuidanceLines: string[];
   forced?: boolean;
 }): string {
@@ -48,7 +47,6 @@ function buildReminderBlock(options: {
     currentState,
     currentContext,
     otherScratchpads,
-    reminderTone,
     emptyStateGuidanceLines,
     forced,
   } = options;
@@ -81,15 +79,11 @@ function buildReminderBlock(options: {
       "3. Add completed tool call IDs to omitToolCallIds",
       "Failure to free context will result in an error."
     );
-  } else if (reminderTone === "informational") {
-    if (
-      (currentState.entries === undefined || Object.keys(currentState.entries).length === 0)
-      && emptyStateGuidanceLines.length > 0
-    ) {
-      lines.push(...emptyStateGuidanceLines);
-    }
-  } else if (reminderTone === "urgent") {
-    lines.push("Context is tight. scratchpad(...) can update persisted entries and free visible context with preserveTurns and omitToolCallIds.");
+  } else if (
+    (currentState.entries === undefined || Object.keys(currentState.entries).length === 0)
+    && emptyStateGuidanceLines.length > 0
+  ) {
+    lines.push(...emptyStateGuidanceLines);
   }
   return lines.join("\n");
 }
@@ -97,7 +91,6 @@ function buildReminderBlock(options: {
 export class ScratchpadStrategy implements ContextManagementStrategy {
   readonly name = "scratchpad";
   private readonly scratchpadStore: ScratchpadStore;
-  private readonly reminderTone: "informational" | "urgent" | "silent";
   private readonly emptyStateGuidanceLines: string[];
   private readonly budgetProfile?: NormalizedContextBudgetProfile;
   private readonly forceToolThresholdRatio?: number;
@@ -117,7 +110,6 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
     }
 
     this.scratchpadStore = options.scratchpadStore;
-    this.reminderTone = options.reminderTone ?? "informational";
     this.emptyStateGuidanceLines = (
       Array.isArray(options.emptyStateGuidance)
         ? options.emptyStateGuidance
@@ -185,8 +177,10 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
       && this.budgetProfile !== undefined
       ? Math.floor(this.budgetProfile.tokenBudget * this.forceToolThresholdRatio)
       : undefined;
-    const alreadyForcedToScratchpad = state.params?.toolChoice?.type === "tool"
-      && state.params?.toolChoice?.toolName === "scratchpad";
+    const alreadyForcedToScratchpad = typeof state.params?.toolChoice === "object"
+      && state.params.toolChoice !== null
+      && state.params.toolChoice.type === "tool"
+      && state.params.toolChoice.toolName === "scratchpad";
     const justCalledScratchpad = latestToolActivity?.toolName === "scratchpad";
     const shouldForceToolChoice = forceThresholdTokens !== undefined
       && estimatedTokens >= forceThresholdTokens
@@ -197,7 +191,6 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
       currentState,
       currentContext: state.requestContext,
       otherScratchpads: allScratchpads,
-      reminderTone: this.reminderTone,
       emptyStateGuidanceLines: this.emptyStateGuidanceLines,
       forced: shouldForceToolChoice,
     });
@@ -234,7 +227,6 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
         activeNoticeProjectedTurnCountAtCall: currentState.activeNotice?.projectedTurnCountAtCall,
         appliedOmitCount: appliedOmitToolCallIds.length,
         otherScratchpadCount: allScratchpads.length,
-        reminderTone: this.reminderTone,
         estimatedTokens,
         forceToolThresholdRatio: this.forceToolThresholdRatio,
         forceThresholdTokens,

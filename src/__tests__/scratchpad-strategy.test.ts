@@ -266,7 +266,6 @@ describe("ScratchpadStrategy", () => {
       payloads: expect.objectContaining({
         entryCount: 2,
         appliedOmitCount: 2,
-        reminderTone: "informational",
         activeNoticeDescription: "Saving parser state",
       }),
     });

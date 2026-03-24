@@ -1,31 +1,16 @@
 /**
  * System Prompt Caching — consolidate and stabilize the prompt prefix
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 import {
   SystemPromptCachingStrategy,
   createContextManagementRuntime,
 } from "ai-sdk-context-management";
-import {
-  DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
-  printPrompt,
-} from "./helpers.js";
+import { printPrompt, runPreparedDemo } from "./helpers.js";
 
 async function main() {
   const runtime = createContextManagementRuntime({
     strategies: [new SystemPromptCachingStrategy()],
-  });
-
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("The prompt prefix is now stable."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
   });
 
   const messages: ModelMessage[] = [
@@ -36,10 +21,10 @@ async function main() {
     { role: "user", content: "Start with parser.ts." },
   ];
 
-  const result = await generateText({
-    model,
+  const { result, capturedPrompts } = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
+    responseText: "The prompt prefix is now stable.",
   });
 
   printPrompt("Prompt after SystemPromptCachingStrategy", capturedPrompts[0]);

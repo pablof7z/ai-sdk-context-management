@@ -79,29 +79,21 @@ describe("ContextUtilizationReminderStrategy", () => {
     });
 
     const prompt = makePrompt();
-    const transformed = await runtime.middleware.transformParams?.({
-      params: {
-        prompt,
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
+    const transformed = await runtime.prepareRequest({
+      requestContext: {
+        conversationId: "conv-1",
+        agentId: "agent-1",
       },
+      messages: prompt,
       model: {
-        specificationVersion: "v3",
         provider: "mock",
         modelId: "mock",
-        supportedUrls: {},
-        doGenerate: async () => { throw new Error("unused"); },
-        doStream: async () => { throw new Error("unused"); },
       },
-    } as any);
+    });
 
-    expect(JSON.stringify(transformed?.prompt)).toContain("scratchpad(...) is available for context compaction");
-    expect(JSON.stringify(transformed?.prompt)).toContain("omitToolCallIds removes completed tool exchanges");
-    expect(JSON.stringify(transformed?.prompt)).toContain("preserveTurns keeps only the head and tail turns");
+    expect(JSON.stringify(transformed.messages)).toContain("scratchpad(...) is available for context compaction");
+    expect(JSON.stringify(transformed.messages)).toContain("omitToolCallIds removes completed tool exchanges");
+    expect(JSON.stringify(transformed.messages)).toContain("preserveTurns keeps only the head and tail turns");
 
     const strategyEvent = events.find((event) => event.type === "strategy-complete");
     expect(strategyEvent).toBeDefined();

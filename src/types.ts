@@ -1,11 +1,10 @@
 import type {
   LanguageModelV3CallOptions,
   LanguageModelV3Message,
-  LanguageModelV3Middleware,
   LanguageModelV3Prompt,
   LanguageModelV3ToolResultOutput,
 } from "@ai-sdk/provider";
-import type { LanguageModel, ToolSet } from "ai";
+import type { LanguageModel, ModelMessage, ToolChoice, ToolSet } from "ai";
 import type { SystemReminderContext, SystemReminderEmission } from "ai-sdk-system-reminders";
 
 export const CONTEXT_MANAGEMENT_KEY = "contextManagement";
@@ -29,15 +28,22 @@ export interface RemovedToolExchange {
 
 export type ContextManagementReminder = SystemReminderEmission;
 
+export interface ContextManagementRequestParams {
+  prompt: LanguageModelV3Prompt;
+  tools?: ToolSet;
+  toolChoice?: ToolChoice<ToolSet>;
+  providerOptions?: LanguageModelV3CallOptions["providerOptions"];
+}
+
 export interface ContextManagementStrategyState {
-  readonly params: LanguageModelV3CallOptions;
+  readonly params: ContextManagementRequestParams;
   readonly prompt: LanguageModelV3Prompt;
   readonly requestContext: ContextManagementRequestContext;
   readonly model?: ContextManagementModelRef;
   readonly removedToolExchanges: readonly RemovedToolExchange[];
   readonly pinnedToolCallIds: ReadonlySet<string>;
   updatePrompt(prompt: LanguageModelV3Prompt): void;
-  updateParams(patch: Partial<LanguageModelV3CallOptions>): void;
+  updateParams(patch: Partial<ContextManagementRequestParams>): void;
   addRemovedToolExchanges(exchanges: RemovedToolExchange[]): void;
   addPinnedToolCallIds(toolCallIds: string[]): void;
   emitReminder(reminder: SystemReminderEmission): Promise<void>;
@@ -134,8 +140,18 @@ export interface ContextManagementRuntimeCompleteEvent {
   payloads: {
     prompt: LanguageModelV3Prompt;
     providerOptions: LanguageModelV3CallOptions["providerOptions"];
-    toolChoice?: LanguageModelV3CallOptions["toolChoice"];
+    toolChoice?: ToolChoice<ToolSet>;
   };
+}
+
+export interface ContextManagementCalibrationEvent {
+  type: "calibration-update";
+  requestContext: ContextManagementRequestContext;
+  rawEstimate: number;
+  actualTokens: number;
+  previousFactor: number;
+  newFactor: number;
+  sampleCount: number;
 }
 
 export type ContextManagementTelemetryEvent =
@@ -144,7 +160,8 @@ export type ContextManagementTelemetryEvent =
   | ContextManagementToolExecuteStartEvent
   | ContextManagementToolExecuteCompleteEvent
   | ContextManagementToolExecuteErrorEvent
-  | ContextManagementRuntimeCompleteEvent;
+  | ContextManagementRuntimeCompleteEvent
+  | ContextManagementCalibrationEvent;
 
 export type ContextManagementTelemetrySink = (
   event: ContextManagementTelemetryEvent
@@ -157,15 +174,39 @@ export interface CreateContextManagementRuntimeOptions {
   systemReminderContext?: Pick<SystemReminderContext<unknown>, "queue" | "defer">;
 }
 
+export interface PrepareContextManagementRequestOptions {
+  requestContext: ContextManagementRequestContext;
+  messages: ModelMessage[];
+  tools?: ToolSet;
+  toolChoice?: ToolChoice<ToolSet>;
+  providerOptions?: LanguageModelV3CallOptions["providerOptions"];
+  model?: ContextManagementModelRef;
+}
+
+export interface ContextManagementPreparedRequest {
+  messages: ModelMessage[];
+  providerOptions?: LanguageModelV3CallOptions["providerOptions"];
+  toolChoice?: ToolChoice<ToolSet>;
+  reportActualUsage(actualInputTokens: number | null | undefined): Promise<void>;
+}
+
 export interface ContextManagementRuntime {
-  middleware: LanguageModelV3Middleware;
+  prepareRequest(
+    options: PrepareContextManagementRequestOptions
+  ): Promise<ContextManagementPreparedRequest>;
   optionalTools: ToolSet;
 }
 
 export interface PromptTokenEstimator {
   estimatePrompt(prompt: LanguageModelV3Prompt): number;
   estimateMessage(message: LanguageModelV3Message): number;
-  estimateTools?(tools: LanguageModelV3CallOptions["tools"]): number;
+  estimateTools?(tools: ToolSet | undefined): number;
+}
+
+export interface CalibratingEstimator extends PromptTokenEstimator {
+  reportActualUsage(rawEstimate: number, actualTokens: number): void;
+  readonly calibrationFactor: number;
+  readonly calibrationSamples: number;
 }
 
 export interface ContextBudgetProfile {
@@ -311,7 +352,6 @@ export interface ScratchpadStore {
 
 export interface ScratchpadStrategyOptions {
   scratchpadStore: ScratchpadStore;
-  reminderTone?: "informational" | "urgent" | "silent";
   emptyStateGuidance?: string | string[];
   budgetProfile?: ContextBudgetProfile;
   forceToolThresholdRatio?: number;
@@ -376,7 +416,6 @@ export interface ScratchpadStrategyPayload {
   activeNoticeProjectedTurnCountAtCall?: number;
   appliedOmitCount: number;
   otherScratchpadCount: number;
-  reminderTone: "informational" | "urgent" | "silent";
   estimatedTokens: number;
   forceToolThresholdRatio?: number;
   forceThresholdTokens?: number;

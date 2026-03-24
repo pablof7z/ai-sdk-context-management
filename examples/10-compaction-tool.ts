@@ -1,17 +1,15 @@
 /**
  * Compaction Tool — let the agent request compaction explicitly
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 import {
   CompactionToolStrategy,
   createContextManagementRuntime,
 } from "ai-sdk-context-management";
 import {
   DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
   printPrompt,
+  runPreparedDemo,
 } from "./helpers.js";
 
 async function main() {
@@ -43,15 +41,6 @@ async function main() {
     { experimental_context: DEMO_CONTEXT }
   );
 
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("The compacted summary is enough to continue."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
-  });
-
   const messages: ModelMessage[] = [
     { role: "system", content: "You are analyzing a TypeScript service." },
     { role: "user", content: "Read config.json." },
@@ -61,23 +50,23 @@ async function main() {
     { role: "user", content: "What should we fix next?" },
   ];
 
-  await generateText({
-    model,
+  const firstRun = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
+    responseText: "The compacted summary is enough to continue.",
   });
 
-  await generateText({
-    model,
+  const secondRun = await runPreparedDemo({
+    runtime,
     messages: [
       { role: "system", content: "You are analyzing a TypeScript service." },
       { role: "user", content: "Continue from the previous investigation." },
     ],
-    providerOptions: DEMO_CONTEXT,
+    responseText: "The compacted summary is enough to continue.",
   });
 
-  printPrompt("Prompt on the compaction turn", capturedPrompts[0]);
-  printPrompt("Prompt on the following turn", capturedPrompts[1]);
+  printPrompt("Prompt on the compaction turn", firstRun.capturedPrompts[0]);
+  printPrompt("Prompt on the following turn", secondRun.capturedPrompts[0]);
   console.log("\nTool result from compact_context(...):");
   console.log(JSON.stringify(toolResult, null, 2));
   console.log("\nWhat changed:");

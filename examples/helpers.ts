@@ -1,10 +1,11 @@
 import type {
   LanguageModelV3GenerateResult,
   LanguageModelV3Message,
-  LanguageModelV3Middleware,
   LanguageModelV3Prompt,
   LanguageModelV3Usage,
 } from "@ai-sdk/provider";
+import { generateText, type ModelMessage, type ToolChoice, type ToolSet } from "ai";
+import type { ContextManagementRuntime } from "ai-sdk-context-management";
 import { MockLanguageModelV3 } from "ai/test";
 
 export const DEMO_CONTEXT = {
@@ -42,15 +43,71 @@ export function createMockTextModel(text: string): MockLanguageModelV3 {
   });
 }
 
-export function createPromptCaptureMiddleware(
-  capturedPrompts: LanguageModelV3Prompt[]
-): LanguageModelV3Middleware {
-  return {
-    specificationVersion: "v3",
-    transformParams: async ({ params }) => {
-      capturedPrompts.push(structuredClone(params.prompt));
-      return params;
+export async function prepareDemoRequest(options: {
+  runtime: Pick<ContextManagementRuntime, "prepareRequest" | "optionalTools">;
+  messages: ModelMessage[];
+  capturedPrompts?: LanguageModelV3Prompt[];
+  tools?: ToolSet;
+  toolChoice?: ToolChoice<ToolSet>;
+  model?: {
+    provider: string;
+    modelId: string;
+  };
+}): Promise<Awaited<ReturnType<ContextManagementRuntime["prepareRequest"]>>> {
+  const prepared = await options.runtime.prepareRequest({
+    requestContext: DEMO_CONTEXT.contextManagement,
+    messages: options.messages,
+    tools: options.tools ?? options.runtime.optionalTools,
+    toolChoice: options.toolChoice,
+    model: options.model ?? {
+      provider: "demo",
+      modelId: "demo",
     },
+  });
+
+  options.capturedPrompts?.push(structuredClone(prepared.messages as LanguageModelV3Prompt));
+  return prepared;
+}
+
+export async function runPreparedDemo(options: {
+  runtime: Pick<ContextManagementRuntime, "prepareRequest" | "optionalTools">;
+  messages: ModelMessage[];
+  responseText: string;
+  tools?: ToolSet;
+  toolChoice?: ToolChoice<ToolSet>;
+  model?: {
+    provider: string;
+    modelId: string;
+  };
+  experimentalContext?: unknown;
+}): Promise<{
+  capturedPrompts: LanguageModelV3Prompt[];
+  result: Awaited<ReturnType<typeof generateText>>;
+}> {
+  const capturedPrompts: LanguageModelV3Prompt[] = [];
+  const prepared = await prepareDemoRequest({
+    runtime: options.runtime,
+    messages: options.messages,
+    capturedPrompts,
+    tools: options.tools,
+    toolChoice: options.toolChoice,
+    model: options.model,
+  });
+
+  const result = await generateText({
+    model: createMockTextModel(options.responseText),
+    messages: prepared.messages,
+    tools: options.tools ?? options.runtime.optionalTools,
+    toolChoice: prepared.toolChoice,
+    providerOptions: prepared.providerOptions,
+    experimental_context: options.experimentalContext,
+  });
+
+  await prepared.reportActualUsage(result.usage.inputTokens);
+
+  return {
+    capturedPrompts,
+    result,
   };
 }
 

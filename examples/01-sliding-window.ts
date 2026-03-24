@@ -1,31 +1,16 @@
 /**
  * Sliding Window — keep the recent tail, or preserve a head plus tail
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 import {
   SlidingWindowStrategy,
   createContextManagementRuntime,
 } from "ai-sdk-context-management";
-import {
-  DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
-  printPrompt,
-} from "./helpers.js";
+import { printPrompt, runPreparedDemo } from "./helpers.js";
 
 async function main() {
   const runtime = createContextManagementRuntime({
     strategies: [new SlidingWindowStrategy({ keepLastMessages: 4 })],
-  });
-
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("Only Germany and Italy are still visible."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
   });
 
   const messages: ModelMessage[] = [
@@ -39,10 +24,10 @@ async function main() {
     { role: "user", content: "List every capital I asked about." },
   ];
 
-  const result = await generateText({
-    model,
+  const { result, capturedPrompts } = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
+    responseText: "Only Germany and Italy are still visible.",
   });
 
   printPrompt("Prompt after SlidingWindowStrategy", capturedPrompts[0]);

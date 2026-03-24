@@ -1,8 +1,7 @@
 /**
  * Pinned Messages — protect specific tool results from later pruning
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 import {
   PinnedMessagesStrategy,
   ToolResultDecayStrategy,
@@ -10,9 +9,8 @@ import {
 } from "ai-sdk-context-management";
 import {
   DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
   printPrompt,
+  runPreparedDemo,
 } from "./helpers.js";
 
 async function main() {
@@ -46,15 +44,6 @@ async function main() {
     { experimental_context: DEMO_CONTEXT }
   );
 
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("The pinned result stayed available even though the others decayed."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
-  });
-
   const messages: ModelMessage[] = [
     { role: "system", content: "You are debugging a build failure." },
     {
@@ -86,10 +75,10 @@ async function main() {
     { role: "user", content: "What is the likely cause?" },
   ];
 
-  const result = await generateText({
-    model,
+  const { result, capturedPrompts } = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
+    responseText: "The pinned result stayed available even though the others decayed.",
   });
 
   printPrompt("Prompt after PinnedMessagesStrategy + ToolResultDecayStrategy", capturedPrompts[0]);

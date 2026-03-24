@@ -1,18 +1,12 @@
 /**
  * Model-Backed Summarization — use SummarizationStrategy with a built-in model-backed summarizer
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 import {
   SummarizationStrategy,
   createContextManagementRuntime,
 } from "ai-sdk-context-management";
-import {
-  DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
-  printPrompt,
-} from "./helpers.js";
+import { printPrompt, runPreparedDemo } from "./helpers.js";
 
 async function main() {
   const runtime = createContextManagementRuntime({
@@ -27,15 +21,6 @@ async function main() {
     ],
   });
 
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("The LLM-produced summary preserved the older parser discussion."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
-  });
-
   const messages: ModelMessage[] = [
     { role: "system", content: "You are debugging a parser migration." },
     { role: "user", content: "We support JSON today." },
@@ -45,10 +30,10 @@ async function main() {
     { role: "user", content: "What is still risky?" },
   ];
 
-  const result = await generateText({
-    model,
+  const { result, capturedPrompts } = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
+    responseText: "The LLM-produced summary preserved the older parser discussion.",
   });
 
   printPrompt("Prompt after model-backed SummarizationStrategy", capturedPrompts[0]);

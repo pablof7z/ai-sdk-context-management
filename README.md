@@ -1,6 +1,6 @@
 # ai-sdk-context-management
 
-Context management for AI SDK agents: prompt-rewriting middleware, optional agent tools, and structured telemetry.
+Context management for AI SDK agents: explicit prompt preparation, optional agent tools, and structured telemetry.
 
 Every agent eventually runs into the same problem: the next model call cannot see everything. Context management is the policy that decides:
 
@@ -10,7 +10,7 @@ Every agent eventually runs into the same problem: the next model call cannot se
 - what should stay stable for prompt caching
 - when the agent should manage its own future context
 
-`ai-sdk-context-management` sits at the model boundary. It does not replace your thread store or orchestrator. It rewrites the provider prompt before each call and exposes optional tools that let the agent shape later turns.
+`ai-sdk-context-management` sits at the model boundary. It does not replace your thread store or orchestrator. It prepares the exact `messages` payload you send to AI SDK before each call and exposes optional tools that let the agent shape later turns.
 
 ## Installation
 
@@ -23,13 +23,13 @@ npm install ai @ai-sdk/provider ai-sdk-context-management ai-sdk-system-reminder
 The minimum integration is small:
 
 ```ts
-import { generateText, wrapLanguageModel } from "ai";
+import { generateText } from "ai";
 import {
   ToolResultDecayStrategy,
   createContextManagementRuntime,
 } from "ai-sdk-context-management";
 
-const contextManagement = {
+const requestContext = {
   conversationId: "conv-123",
   agentId: "agent-456",
 };
@@ -38,34 +38,46 @@ const runtime = createContextManagementRuntime({
   strategies: [new ToolResultDecayStrategy({ maxPromptTokens: 24_000 })],
 });
 
-const model = wrapLanguageModel({
-  model: baseModel,
-  middleware: runtime.middleware,
-});
-
-const result = await generateText({
-  model,
+const prepared = await runtime.prepareRequest({
+  requestContext,
   messages,
   tools: {
     ...agentTools,
     ...runtime.optionalTools,
   },
-  providerOptions: { contextManagement },
-  experimental_context: { contextManagement },
+  model: {
+    provider: "openrouter",
+    modelId: "anthropic/claude-4",
+  },
 });
+
+const result = await generateText({
+  model: baseModel,
+  messages: prepared.messages,
+  tools: {
+    ...agentTools,
+    ...runtime.optionalTools,
+  },
+  toolChoice: prepared.toolChoice,
+  providerOptions: prepared.providerOptions,
+  experimental_context: { contextManagement: requestContext },
+});
+
+await prepared.reportActualUsage(result.usage.inputTokens);
 ```
 
 That is the core contract:
 
-- wrap the model with `runtime.middleware`
+- call `runtime.prepareRequest(...)` immediately before the model call
 - merge in `runtime.optionalTools` if you use tool-emitting strategies
-- pass the same `contextManagement` object to both `providerOptions` and `experimental_context`
+- pass the same request context to `experimental_context` for optional tool execution
+- call `reportActualUsage(...)` with the actual input-token count after the model step completes
 
 If you want the full stack version with telemetry, summarization, scratchpad, and reminders, run [`examples/04-composed-strategies.ts`](./examples/04-composed-strategies.ts).
 
 ## Request Context Contract
 
-The middleware reads `providerOptions.contextManagement`.
+`prepareRequest(...)` requires `requestContext`.
 
 Optional tools read `experimental_context.contextManagement`.
 
@@ -79,7 +91,7 @@ Both must contain the same request-scoped identity:
 }
 ```
 
-If that context is missing, the middleware becomes a no-op and context-management tools will reject execution.
+If that context is missing, `prepareRequest(...)` cannot run and context-management tools will reject execution.
 
 ## Strategy Index
 
@@ -183,8 +195,15 @@ See [`examples/README.md`](./examples/README.md) for the full example index.
 
 Returns:
 
-- `middleware`
+- `prepareRequest`
 - `optionalTools`
+
+`prepareRequest(...)` returns:
+
+- `messages`
+- `providerOptions`
+- `toolChoice`
+- `reportActualUsage(actualInputTokens)`
 
 The runtime merges tools from all strategies and throws on tool-name collisions.
 
@@ -218,7 +237,7 @@ The runtime can emit raw events for every request:
 - `tool-execute-error`
 - `runtime-complete`
 
-These events include request context, before/after token estimates, removed-tool deltas, pinned-tool deltas, and the final provider-facing prompt snapshot after middleware runs. The `runtime-complete` event also includes the final `providerOptions` and `toolChoice`.
+These events include request context, before/after token estimates, removed-tool deltas, pinned-tool deltas, and the final provider-facing prompt snapshot after `prepareRequest(...)` runs. The `runtime-complete` event also includes the final `providerOptions` and `toolChoice`.
 
 ## Utilities
 

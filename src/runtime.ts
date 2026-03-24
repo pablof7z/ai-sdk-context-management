@@ -1,12 +1,14 @@
-import type { LanguageModelV3CallOptions, LanguageModelV3Middleware } from "@ai-sdk/provider";
-import type { ToolSet } from "ai";
+import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage, ToolSet } from "ai";
 import { createSystemReminderSink } from "ai-sdk-system-reminders";
-import { appendReminderToLatestUserMessage, clonePrompt, extractRequestContext } from "./prompt-utils.js";
-import { createDefaultPromptTokenEstimator } from "./token-estimator.js";
+import { appendReminderToLatestUserMessage, clonePrompt } from "./prompt-utils.js";
+import { createCalibratingEstimator, createDefaultPromptTokenEstimator } from "./token-estimator.js";
 import { CONTEXT_MANAGEMENT_KEY } from "./types.js";
 import type {
+  ContextManagementPreparedRequest,
   ContextManagementStrategyPayload,
   ContextManagementModelRef,
+  ContextManagementRequestParams,
   ContextManagementRequestContext,
   ContextManagementRuntime,
   ContextManagementStrategy,
@@ -14,17 +16,18 @@ import type {
   ContextManagementStrategyState,
   ContextManagementTelemetrySink,
   CreateContextManagementRuntimeOptions,
+  PrepareContextManagementRequestOptions,
   PromptTokenEstimator,
   RemovedToolExchange,
 } from "./types.js";
 
 class StrategyState implements ContextManagementStrategyState {
-  private currentParams: LanguageModelV3CallOptions;
+  private currentParams: ContextManagementRequestParams;
   private readonly removedByToolCallId = new Map<string, RemovedToolExchange>();
   private readonly pinned = new Set<string>();
 
   constructor(
-    params: LanguageModelV3CallOptions,
+    params: ContextManagementRequestParams,
     public readonly requestContext: ContextManagementRequestContext,
     public readonly model?: ContextManagementModelRef,
     private readonly systemReminderSink?: ReturnType<typeof createSystemReminderSink>
@@ -35,7 +38,7 @@ class StrategyState implements ContextManagementStrategyState {
     };
   }
 
-  get params(): LanguageModelV3CallOptions {
+  get params(): ContextManagementRequestParams {
     return this.currentParams;
   }
 
@@ -51,14 +54,14 @@ class StrategyState implements ContextManagementStrategyState {
     return this.pinned;
   }
 
-  updatePrompt(prompt: LanguageModelV3CallOptions["prompt"]): void {
+  updatePrompt(prompt: ContextManagementRequestParams["prompt"]): void {
     this.currentParams = {
       ...this.currentParams,
       prompt,
     };
   }
 
-  updateParams(patch: Partial<LanguageModelV3CallOptions>): void {
+  updateParams(patch: Partial<ContextManagementRequestParams>): void {
     this.currentParams = {
       ...this.currentParams,
       ...patch,
@@ -104,7 +107,7 @@ function cloneUnknown<T>(value: T): T {
   return value;
 }
 
-function countMessages(prompt: LanguageModelV3CallOptions["prompt"]): number {
+function countMessages(prompt: ContextManagementRequestParams["prompt"]): number {
   return prompt.length;
 }
 
@@ -273,33 +276,78 @@ function wrapOptionalTools(
   return wrapped;
 }
 
+function createActualUsageReporter(options: {
+  baseEstimator: PromptTokenEstimator;
+  calibratingEstimator: ReturnType<typeof createCalibratingEstimator>;
+  telemetry: ContextManagementTelemetrySink | undefined;
+  requestContext: ContextManagementRequestContext;
+  prompt: LanguageModelV3Prompt;
+  tools: ToolSet | undefined;
+}): ContextManagementPreparedRequest["reportActualUsage"] {
+  return async (actualInputTokens) => {
+    if (actualInputTokens == null || actualInputTokens <= 0) {
+      return;
+    }
+
+    const rawEstimate =
+      options.baseEstimator.estimatePrompt(options.prompt) +
+      (options.baseEstimator.estimateTools?.(options.tools) ?? 0);
+
+    if (rawEstimate <= 0) {
+      return;
+    }
+
+    const previousFactor = options.calibratingEstimator.calibrationFactor;
+    options.calibratingEstimator.reportActualUsage(rawEstimate, actualInputTokens);
+
+    await emitTelemetry(options.telemetry, () => ({
+      type: "calibration-update",
+      requestContext: options.requestContext,
+      rawEstimate,
+      actualTokens: actualInputTokens,
+      previousFactor,
+      newFactor: options.calibratingEstimator.calibrationFactor,
+      sampleCount: options.calibratingEstimator.calibrationSamples,
+    }));
+  };
+}
+
 export function createContextManagementRuntime(
   options: CreateContextManagementRuntimeOptions
 ): ContextManagementRuntime {
   const strategies = [...options.strategies];
-  const estimator: PromptTokenEstimator = options.estimator ?? createDefaultPromptTokenEstimator();
+  const baseEstimator: PromptTokenEstimator = options.estimator ?? createDefaultPromptTokenEstimator();
+  const calibratingEstimator = createCalibratingEstimator(baseEstimator);
+  const estimator = calibratingEstimator;
   const { tools, toolOwners } = mergeOptionalTools(strategies);
   const optionalTools = wrapOptionalTools(tools, toolOwners, options.telemetry);
   const systemReminderSink = options.systemReminderContext
     ? createSystemReminderSink(options.systemReminderContext)
     : undefined;
-  const middleware: LanguageModelV3Middleware = {
-    specificationVersion: "v3",
-    async transformParams({ params, model }) {
-      const requestContext = extractRequestContext(params);
 
-      if (!requestContext) {
-        return params;
-      }
-
-      const state = new StrategyState(params, requestContext, {
-        provider: model.provider,
-        modelId: model.modelId,
-      }, systemReminderSink);
-      const toolTokenOverhead = estimator.estimateTools?.(params.tools) ?? 0;
-      const estimate = (prompt: LanguageModelV3CallOptions["prompt"]) =>
-        estimator.estimatePrompt(prompt) + toolTokenOverhead;
-      const initialTokenEstimate = estimate(state.prompt);
+  return {
+    async prepareRequest({
+      requestContext,
+      messages,
+      tools: requestTools,
+      toolChoice,
+      providerOptions,
+      model,
+    }: PrepareContextManagementRequestOptions): Promise<ContextManagementPreparedRequest> {
+      const state = new StrategyState(
+        {
+          prompt: clonePrompt(messages as LanguageModelV3Prompt),
+          tools: requestTools,
+          toolChoice,
+          providerOptions: cloneUnknown(providerOptions),
+        },
+        requestContext,
+        model,
+        systemReminderSink
+      );
+      const estimate = (prompt: LanguageModelV3Prompt, tools: ToolSet | undefined) =>
+        estimator.estimatePrompt(prompt) + (estimator.estimateTools?.(tools) ?? 0);
+      const initialTokenEstimate = estimate(state.prompt, state.params.tools);
       const initialMessageCount = countMessages(state.prompt);
 
       await emitTelemetry(options.telemetry, () => ({
@@ -310,7 +358,7 @@ export function createContextManagementRuntime(
         estimatedTokensBefore: initialTokenEstimate,
         messageCount: initialMessageCount,
         payloads: {
-          providerOptions: cloneUnknown(params.providerOptions),
+          providerOptions: cloneUnknown(providerOptions),
         },
       }));
 
@@ -318,9 +366,9 @@ export function createContextManagementRuntime(
         const removedBefore = state.removedToolExchanges.length;
         const pinnedBefore = state.pinnedToolCallIds.size;
         const messageCountBefore = countMessages(state.prompt);
-        const estimatedTokensBefore = estimate(state.prompt);
+        const estimatedTokensBefore = estimate(state.prompt, state.params.tools);
         const execution: ContextManagementStrategyExecution | void = await strategy.apply(state);
-        const estimatedTokensAfter = estimate(state.prompt);
+        const estimatedTokensAfter = estimate(state.prompt, state.params.tools);
         const messageCountAfter = countMessages(state.prompt);
         const removedAfter = state.removedToolExchanges.length;
         const pinnedAfter = state.pinnedToolCallIds.size;
@@ -354,7 +402,7 @@ export function createContextManagementRuntime(
         type: "runtime-complete",
         requestContext,
         estimatedTokensBefore: initialTokenEstimate,
-        estimatedTokensAfter: estimate(state.prompt),
+        estimatedTokensAfter: estimate(state.prompt, state.params.tools),
         removedToolExchangesTotal: state.removedToolExchanges.length,
         pinnedToolCallIdsTotal: state.pinnedToolCallIds.size,
         messageCountBefore: initialMessageCount,
@@ -368,12 +416,20 @@ export function createContextManagementRuntime(
         },
       }));
 
-      return state.params;
+      return {
+        messages: clonePrompt(state.prompt) as ModelMessage[],
+        providerOptions: cloneUnknown(state.params.providerOptions),
+        toolChoice: cloneUnknown(state.params.toolChoice),
+        reportActualUsage: createActualUsageReporter({
+          baseEstimator,
+          calibratingEstimator,
+          telemetry: options.telemetry,
+          requestContext,
+          prompt: clonePrompt(state.prompt),
+          tools: state.params.tools,
+        }),
+      };
     },
-  };
-
-  return {
-    middleware,
     optionalTools,
   };
 }

@@ -8,20 +8,15 @@ describe("SlidingWindowStrategy", () => {
       strategies: [new SlidingWindowStrategy({ keepLastMessages: 2 })],
     });
 
-    const result = await runtime.middleware.transformParams?.({
-      params: {
-        prompt: makePrompt(),
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
+    const result = await runtime.prepareRequest({
+      requestContext: {
+        conversationId: "conv-1",
+        agentId: "agent-1",
       },
-      model: { specificationVersion: "v3", provider: "mock", modelId: "mock", doGenerate: async () => { throw new Error("unused"); }, doStream: async () => { throw new Error("unused"); }, supportedUrls: {} },
-    } as any);
+      messages: makePrompt(),
+    });
 
-    expect(result?.prompt.map((message) => message.role)).toEqual([
+    expect(result.messages.map((message) => message.role)).toEqual([
       "system",
       "assistant",
       "tool",
@@ -69,20 +64,15 @@ describe("SlidingWindowStrategy", () => {
       ],
     });
 
-    const result = await runtime.middleware.transformParams?.({
-      params: {
-        prompt: makePrompt(),
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
+    const result = await runtime.prepareRequest({
+      requestContext: {
+        conversationId: "conv-1",
+        agentId: "agent-1",
       },
-      model: { specificationVersion: "v3", provider: "mock", modelId: "mock", doGenerate: async () => { throw new Error("unused"); }, doStream: async () => { throw new Error("unused"); }, supportedUrls: {} },
-    } as any);
+      messages: makePrompt(),
+    });
 
-    const nonSystemCount = result?.prompt.filter((message) => message.role !== "system").length;
+    const nonSystemCount = result.messages.filter((message) => message.role !== "system").length;
     expect(nonSystemCount).toBe(1);
   });
 

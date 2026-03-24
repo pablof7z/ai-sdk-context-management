@@ -3,6 +3,7 @@ import type {
   PromptTokenEstimator,
 } from "./types.js";
 import type { LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { ToolSet } from "ai";
 
 export interface NormalizedContextBudgetProfile {
   tokenBudget: number;
@@ -32,7 +33,7 @@ export function normalizeContextBudgetProfile(
 export function estimateBudgetProfileTokens(
   profile: NormalizedContextBudgetProfile,
   prompt: LanguageModelV3CallOptions["prompt"],
-  tools: LanguageModelV3CallOptions["tools"]
+  tools: ToolSet | undefined
 ): number {
   return profile.estimator.estimatePrompt(prompt) + (profile.estimator.estimateTools?.(tools) ?? 0);
 }

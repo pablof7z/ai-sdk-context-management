@@ -1,8 +1,7 @@
 /**
  * Composed Strategies — a full stack with telemetry
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 import {
   ContextUtilizationReminderStrategy,
   SummarizationStrategy,
@@ -15,15 +14,13 @@ import {
 } from "ai-sdk-context-management";
 import {
   DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
   printPrompt,
+  runPreparedDemo,
 } from "./helpers.js";
 
 async function main() {
   const estimator = createDefaultPromptTokenEstimator();
   const scratchpads = new Map<string, ScratchpadState>();
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
   const telemetryEvents: string[] = [];
 
   const summarizerModel = createMockTextModel(
@@ -62,7 +59,6 @@ async function main() {
                 state,
               })),
         },
-        reminderTone: "informational",
       }),
       new ContextUtilizationReminderStrategy({
         budgetProfile: {
@@ -89,14 +85,6 @@ async function main() {
     },
     { experimental_context: DEMO_CONTEXT }
   );
-
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("The project has a config layer, a test bootstrap, and a server entry point."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
-  });
 
   const messages: ModelMessage[] = [
     { role: "system", content: "You are a coding assistant." },
@@ -155,11 +143,11 @@ async function main() {
     { role: "user", content: "How is the project structured?" },
   ];
 
-  const result = await generateText({
-    model,
+  const { result, capturedPrompts } = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
-    experimental_context: DEMO_CONTEXT,
+    responseText: "The project has a config layer, a test bootstrap, and a server entry point.",
+    experimentalContext: DEMO_CONTEXT,
   });
 
   printPrompt("Prompt after the composed stack", capturedPrompts[0]);

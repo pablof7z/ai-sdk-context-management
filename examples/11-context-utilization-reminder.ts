@@ -1,19 +1,14 @@
 /**
  * Context Utilization Reminder — tell the agent when to clean up context
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
+import type { LanguageModelV3Message } from "@ai-sdk/provider";
 import {
   ContextUtilizationReminderStrategy,
   createContextManagementRuntime,
   createDefaultPromptTokenEstimator,
 } from "ai-sdk-context-management";
-import {
-  DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
-  printPrompt,
-} from "./helpers.js";
+import { printPrompt, runPreparedDemo } from "./helpers.js";
 
 function getUserText(message: LanguageModelV3Message): string {
   if (message.role === "system") {
@@ -44,15 +39,6 @@ async function main() {
     ],
   });
 
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("I should summarize stale context before continuing."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
-  });
-
   const messages: ModelMessage[] = [
     { role: "system", content: "You are a planning agent." },
     {
@@ -62,10 +48,10 @@ async function main() {
     },
   ];
 
-  const result = await generateText({
-    model,
+  const { result, capturedPrompts } = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
+    responseText: "I should summarize stale context before continuing.",
   });
 
   printPrompt("Prompt after ContextUtilizationReminderStrategy", capturedPrompts[0]);

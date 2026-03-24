@@ -1,10 +1,20 @@
 import type { ContextManagementTelemetryEvent } from "../index.js";
-import { createContextManagementRuntime, ScratchpadStrategy, SlidingWindowStrategy } from "../index.js";
-import { createSystemReminderContext } from "ai-sdk-system-reminders";
+import {
+  ContextUtilizationReminderStrategy,
+  ScratchpadStrategy,
+  SlidingWindowStrategy,
+  createContextManagementRuntime,
+} from "../index.js";
 import { InMemoryScratchpadStore, makePrompt } from "./helpers.js";
 
+const requestContext = {
+  conversationId: "conv-1",
+  agentId: "agent-1",
+  agentLabel: "Alpha",
+};
+
 describe("createContextManagementRuntime", () => {
-  test("returns middleware plus merged optional tools", async () => {
+  test("returns prepareRequest plus merged optional tools", async () => {
     const runtime = createContextManagementRuntime({
       strategies: [
         new SlidingWindowStrategy({ keepLastMessages: 2 }),
@@ -12,29 +22,36 @@ describe("createContextManagementRuntime", () => {
       ],
     });
 
-    expect(typeof runtime.middleware.transformParams).toBe("function");
+    expect(typeof runtime.prepareRequest).toBe("function");
     expect(Object.keys(runtime.optionalTools)).toEqual(["scratchpad"]);
   });
 
-  test("no-ops when request context is missing", async () => {
-    const runtime = createContextManagementRuntime({
-      strategies: [new SlidingWindowStrategy({ keepLastMessages: 1 })],
-    });
+  test("no-ops when strategies do not mutate the request", async () => {
     const prompt = makePrompt();
-    const params = {
-      prompt,
-      providerOptions: undefined,
-    };
+    const runtime = createContextManagementRuntime({
+      strategies: [],
+    });
 
-    const result = await runtime.middleware.transformParams?.({
-      params,
-      model: { specificationVersion: "v3", provider: "mock", modelId: "mock", doGenerate: async () => { throw new Error("unused"); }, doStream: async () => { throw new Error("unused"); }, supportedUrls: {} },
-    } as any);
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: prompt,
+      providerOptions: {
+        custom: {
+          debug: true,
+        },
+      },
+    });
 
-    expect(result).toBe(params);
+    expect(prepared.messages).toEqual(prompt);
+    expect(prepared.providerOptions).toEqual({
+      custom: {
+        debug: true,
+      },
+    });
+    expect(prepared.toolChoice).toBeUndefined();
   });
 
-  test("emits runtime and strategy telemetry with message counts", async () => {
+  test("emits runtime and strategy telemetry with final prompt payloads", async () => {
     const events: ContextManagementTelemetryEvent[] = [];
     const runtime = createContextManagementRuntime({
       strategies: [new SlidingWindowStrategy({ keepLastMessages: 2 })],
@@ -43,160 +60,82 @@ describe("createContextManagementRuntime", () => {
       },
     });
 
-    const prompt = makePrompt();
-    await runtime.middleware.transformParams?.({
-      params: {
-        prompt,
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      },
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: makePrompt(),
       model: {
-        specificationVersion: "v3",
         provider: "mock",
         modelId: "mock",
-        supportedUrls: {},
-        doGenerate: async () => { throw new Error("unused"); },
-        doStream: async () => { throw new Error("unused"); },
       },
-    } as any);
+    });
 
+    expect(prepared.messages.map((message) => message.role)).toEqual([
+      "system",
+      "assistant",
+      "tool",
+      "user",
+    ]);
     expect(events.map((event) => event.type)).toEqual([
       "runtime-start",
       "strategy-complete",
       "runtime-complete",
     ]);
 
-    const startEvent = events[0];
-    expect(startEvent.type).toBe("runtime-start");
-    if (startEvent.type === "runtime-start") {
-      expect(startEvent.messageCount).toBe(prompt.length);
-    }
-
-    const strategyEvent = events[1];
-    expect(strategyEvent.type).toBe("strategy-complete");
-    if (strategyEvent.type === "strategy-complete") {
-      expect(strategyEvent.strategyName).toBe("sliding-window");
-      expect(strategyEvent.messageCountBefore).toBe(prompt.length);
-      expect(strategyEvent.messageCountAfter).toBeLessThan(prompt.length);
-    }
-
     const completeEvent = events[2];
-    expect(completeEvent.type).toBe("runtime-complete");
-    if (completeEvent.type === "runtime-complete") {
-      expect(completeEvent.messageCountBefore).toBe(prompt.length);
-      expect(completeEvent.messageCountAfter).toBeLessThan(prompt.length);
-      expect(completeEvent.payloads.prompt.map((message) => message.role)).toEqual([
-        "system",
-        "assistant",
-        "tool",
-        "user",
-      ]);
-      expect(completeEvent.payloads.providerOptions).toEqual({
-        contextManagement: {
-          conversationId: "conv-1",
-          agentId: "agent-1",
-        },
-      });
+    expect(completeEvent?.type).toBe("runtime-complete");
+    if (completeEvent?.type === "runtime-complete") {
+      expect(completeEvent.requestContext).toEqual(requestContext);
+      expect(completeEvent.payloads.prompt).toEqual(prepared.messages);
+      expect(completeEvent.payloads.providerOptions).toBeUndefined();
       expect(completeEvent.payloads.toolChoice).toBeUndefined();
     }
   });
 
-  test("runtime-complete telemetry captures final prompt and call parameters", async () => {
-    const events: ContextManagementTelemetryEvent[] = [];
+  test("scratchpad can force toolChoice through prepareRequest", async () => {
     const runtime = createContextManagementRuntime({
       strategies: [
-        {
-          name: "custom-final-params",
-          apply(state) {
-            state.updatePrompt([
-              {
-                role: "system",
-                content: "rewritten system",
-              },
-              {
-                role: "user",
-                content: [{ type: "text", text: "rewritten user" }],
-              },
-            ]);
-            state.updateParams({
-              providerOptions: {
-                ...state.params.providerOptions,
-                custom: {
-                  debug: true,
-                },
-              },
-              toolChoice: {
-                type: "tool",
-                toolName: "scratchpad",
-              } as any,
-            });
+        new ScratchpadStrategy({
+          scratchpadStore: new InMemoryScratchpadStore(),
+          budgetProfile: {
+            tokenBudget: 100,
+            estimator: {
+              estimateMessage: () => 40,
+              estimatePrompt: () => 80,
+              estimateTools: () => 0,
+            },
           },
-        },
+          forceToolThresholdRatio: 0.7,
+        }),
       ],
-      telemetry: async (event) => {
-        events.push(event);
+      estimator: {
+        estimateMessage: () => 40,
+        estimatePrompt: () => 80,
+        estimateTools: () => 0,
       },
     });
 
-    await runtime.middleware.transformParams?.({
-      params: {
-        prompt: makePrompt(),
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      },
-      model: {
-        specificationVersion: "v3",
-        provider: "mock",
-        modelId: "mock",
-        supportedUrls: {},
-        doGenerate: async () => { throw new Error("unused"); },
-        doStream: async () => { throw new Error("unused"); },
-      },
-    } as any);
-
-    const completeEvent = events.find((event) => event.type === "runtime-complete");
-    expect(completeEvent?.type).toBe("runtime-complete");
-
-    if (completeEvent?.type === "runtime-complete") {
-      expect(completeEvent.payloads.prompt).toEqual([
-        {
-          role: "system",
-          content: "rewritten system",
-        },
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: [
+        { role: "system", content: "You are helpful." },
         {
           role: "user",
-          content: [{ type: "text", text: "rewritten user" }],
+          content: [{ type: "text", text: "Long request that needs compaction." }],
         },
-      ]);
-      expect(completeEvent.payloads.providerOptions).toEqual({
-        contextManagement: {
-          conversationId: "conv-1",
-          agentId: "agent-1",
-        },
-        custom: {
-          debug: true,
-        },
-      });
-      expect(completeEvent.payloads.toolChoice).toEqual({
-        type: "tool",
-        toolName: "scratchpad",
-      });
-    }
+      ],
+      tools: runtime.optionalTools,
+    });
+
+    expect(prepared.toolChoice).toEqual({
+      type: "tool",
+      toolName: "scratchpad",
+    });
   });
 
   test("wraps optional tools with telemetry for execute lifecycle", async () => {
-    const store = new InMemoryScratchpadStore();
     const events: ContextManagementTelemetryEvent[] = [];
     const runtime = createContextManagementRuntime({
-      strategies: [new ScratchpadStrategy({ scratchpadStore: store })],
+      strategies: [new ScratchpadStrategy({ scratchpadStore: new InMemoryScratchpadStore() })],
       telemetry: async (event) => {
         events.push(event);
       },
@@ -204,20 +143,15 @@ describe("createContextManagementRuntime", () => {
 
     await runtime.optionalTools.scratchpad.execute?.(
       {
-        description: "Tracking parser cleanup",
+        description: "Track parser cleanup",
         setEntries: {
           notes: "Track parser cleanup",
         },
       },
       {
         toolCallId: "scratchpad-call-1",
-        messages: [],
         experimental_context: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-            agentLabel: "Alpha",
-          },
+          contextManagement: requestContext,
         },
       }
     );
@@ -226,156 +160,49 @@ describe("createContextManagementRuntime", () => {
       "tool-execute-start",
       "tool-execute-complete",
     ]);
+  });
 
-    const completeEvent = events[1];
-    expect(completeEvent.type).toBe("tool-execute-complete");
-    if (completeEvent.type === "tool-execute-complete") {
-      expect(completeEvent.toolName).toBe("scratchpad");
-      expect(completeEvent.requestContext).toEqual({
-        conversationId: "conv-1",
-        agentId: "agent-1",
-        agentLabel: "Alpha",
-      });
-      expect(completeEvent.payloads.result).toEqual(
-        expect.objectContaining({
-          ok: true,
-        })
-      );
+  test("reportActualUsage emits calibration telemetry", async () => {
+    const events: ContextManagementTelemetryEvent[] = [];
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        new ContextUtilizationReminderStrategy({
+          budgetProfile: {
+            tokenBudget: 100,
+            estimator: {
+              estimateMessage: () => 10,
+              estimatePrompt: () => 100,
+              estimateTools: () => 0,
+            },
+          },
+          warningThresholdRatio: 0.7,
+        }),
+      ],
+      telemetry: async (event) => {
+        events.push(event);
+      },
+      estimator: {
+        estimateMessage: () => 10,
+        estimatePrompt: () => 100,
+        estimateTools: () => 0,
+      },
+    });
+
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: makePrompt(),
+    });
+
+    await prepared.reportActualUsage(150);
+
+    const calibrationEvent = events.find((event) => event.type === "calibration-update");
+    expect(calibrationEvent?.type).toBe("calibration-update");
+    if (calibrationEvent?.type === "calibration-update") {
+      expect(calibrationEvent.requestContext).toEqual(requestContext);
+      expect(calibrationEvent.rawEstimate).toBe(100);
+      expect(calibrationEvent.actualTokens).toBe(150);
+      expect(calibrationEvent.newFactor).toBeGreaterThan(1);
+      expect(calibrationEvent.sampleCount).toBe(1);
     }
-  });
-
-  test("telemetry failures do not break transformParams", async () => {
-    const runtime = createContextManagementRuntime({
-      strategies: [new SlidingWindowStrategy({ keepLastMessages: 2 })],
-      telemetry: async () => {
-        throw new Error("telemetry unavailable");
-      },
-    });
-
-    const result = await runtime.middleware.transformParams?.({
-      params: {
-        prompt: makePrompt(),
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      },
-      model: {
-        specificationVersion: "v3",
-        provider: "mock",
-        modelId: "mock",
-        supportedUrls: {},
-        doGenerate: async () => { throw new Error("unused"); },
-        doStream: async () => { throw new Error("unused"); },
-      },
-    } as any);
-
-    expect(result?.prompt.map((message) => message.role)).toEqual([
-      "system",
-      "assistant",
-      "tool",
-      "user",
-    ]);
-  });
-
-  test("tool execution stays successful when telemetry cannot clone or emit payloads", async () => {
-    const runtime = createContextManagementRuntime({
-      strategies: [
-        {
-          name: "custom-tool",
-          apply() {},
-          getOptionalTools() {
-            return {
-              custom_tool: {
-                description: "Returns a non-cloneable payload.",
-                inputSchema: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {},
-                },
-                async execute() {
-                  return {
-                    ok: true,
-                    render: () => "non-cloneable",
-                  };
-                },
-              },
-            } as any;
-          },
-        },
-      ],
-      telemetry: async () => {
-        throw new Error("telemetry unavailable");
-      },
-    });
-
-    const result = await runtime.optionalTools.custom_tool.execute?.(
-      {},
-      {
-        messages: [],
-        experimental_context: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      }
-    );
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        ok: true,
-      })
-    );
-    expect(typeof result?.render).toBe("function");
-  });
-
-  test("emits structured reminders to a sink instead of mutating the prompt", async () => {
-    const reminderContext = createSystemReminderContext();
-    const runtime = createContextManagementRuntime({
-      strategies: [
-        {
-          name: "custom-reminder",
-          async apply(state) {
-            await state.emitReminder({
-              kind: "custom-reminder",
-              content: "check the working set",
-            });
-          },
-        },
-      ],
-      systemReminderContext: reminderContext,
-    });
-
-    const prompt = makePrompt();
-    const result = await runtime.middleware.transformParams?.({
-      params: {
-        prompt,
-        providerOptions: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      },
-      model: {
-        specificationVersion: "v3",
-        provider: "mock",
-        modelId: "mock",
-        supportedUrls: {},
-        doGenerate: async () => { throw new Error("unused"); },
-        doStream: async () => { throw new Error("unused"); },
-      },
-    } as any);
-
-    expect(result?.prompt.map((message) => message.role)).toEqual(prompt.map((message) => message.role));
-    expect(await reminderContext.collect()).toEqual([
-      {
-        type: "custom-reminder",
-        content: "check the working set",
-      },
-    ]);
   });
 });

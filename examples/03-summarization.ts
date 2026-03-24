@@ -1,18 +1,13 @@
 /**
  * Summarization — replace older history with a deterministic summary block
  */
-import { generateText, wrapLanguageModel, type ModelMessage } from "ai";
-import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
+import type { LanguageModelV3Message } from "@ai-sdk/provider";
 import {
   SummarizationStrategy,
   createContextManagementRuntime,
 } from "ai-sdk-context-management";
-import {
-  DEMO_CONTEXT,
-  createMockTextModel,
-  createPromptCaptureMiddleware,
-  printPrompt,
-} from "./helpers.js";
+import { printPrompt, runPreparedDemo } from "./helpers.js";
 
 function summarize(messages: LanguageModelV3Message[]): Promise<string> {
   const topics = messages
@@ -44,15 +39,6 @@ async function main() {
     ],
   });
 
-  const capturedPrompts: LanguageModelV3Prompt[] = [];
-  const model = wrapLanguageModel({
-    model: wrapLanguageModel({
-      model: createMockTextModel("The summary preserved the older science facts."),
-      middleware: createPromptCaptureMiddleware(capturedPrompts),
-    }),
-    middleware: runtime.middleware,
-  });
-
   const messages: ModelMessage[] = [
     { role: "system", content: "You are a science tutor." },
     { role: "user", content: "What is photosynthesis?" },
@@ -62,10 +48,10 @@ async function main() {
     { role: "user", content: "Explain the overall energy cycle." },
   ];
 
-  const result = await generateText({
-    model,
+  const { result, capturedPrompts } = await runPreparedDemo({
+    runtime,
     messages,
-    providerOptions: DEMO_CONTEXT,
+    responseText: "The summary preserved the older science facts.",
   });
 
   printPrompt("Prompt after SummarizationStrategy", capturedPrompts[0]);

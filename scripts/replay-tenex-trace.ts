@@ -1,5 +1,4 @@
 import {
-  CONTEXT_MANAGEMENT_KEY,
   ScratchpadStrategy,
   createContextManagementRuntime,
   type ContextManagementTelemetryEvent,
@@ -303,32 +302,20 @@ async function runScenario(name: string, prompt: LanguageModelV3Prompt, scratchp
     },
   });
 
-  const transformed = await runtime.middleware.transformParams?.({
-    params: {
-      prompt,
-      providerOptions: {
-        [CONTEXT_MANAGEMENT_KEY]: {
-          conversationId: options.conversationId,
-          agentId: options.agentId,
-          agentLabel: options.agentLabel,
-        },
-      },
+  const transformed = await runtime.prepareRequest({
+    requestContext: {
+      conversationId: options.conversationId,
+      agentId: options.agentId,
+      agentLabel: options.agentLabel,
     },
+    messages: prompt,
     model: {
-      specificationVersion: "v3",
       provider: "replay",
       modelId: "replay",
-      supportedUrls: {},
-      doGenerate: async () => {
-        throw new Error("unused");
-      },
-      doStream: async () => {
-        throw new Error("unused");
-      },
     },
-  } as never);
+  });
 
-  const nextPrompt = transformed?.prompt ?? prompt;
+  const nextPrompt = transformed.messages ?? prompt;
   const complete = telemetry.find((event) => event.type === "runtime-complete");
 
   console.log(`\n=== ${name} ===`);

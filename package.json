@@ -1,7 +1,7 @@
 {
   "name": "ai-sdk-context-management",
-  "version": "0.7.6",
-  "description": "Middleware-driven context management strategies for AI SDK language models",
+  "version": "0.8.1",
+  "description": "Explicit context management strategies for AI SDK language models",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,7 +30,7 @@
   "keywords": [
     "ai-sdk",
     "context-management",
-    "middleware",
+    "prompt-preparation",
     "scratchpad",
     "sliding-window",
     "tool-calling"

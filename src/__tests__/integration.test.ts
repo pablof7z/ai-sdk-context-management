@@ -1,6 +1,7 @@
-import { simulateReadableStream, stepCountIs, streamText, wrapLanguageModel } from "ai";
+import { simulateReadableStream, stepCountIs, streamText } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import {
+  CONTEXT_MANAGEMENT_KEY,
   ContextUtilizationReminderStrategy,
   SummarizationStrategy,
   ToolResultDecayStrategy,
@@ -18,6 +19,15 @@ describe("context management runtime integration", () => {
       estimateMessage: () => 40,
       estimatePrompt: () => 80,
     };
+    const requestContext = {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      agentLabel: "Alpha",
+    };
+    const modelRef = {
+      provider: "mock",
+      modelId: "mock-model",
+    };
     const runtime = createContextManagementRuntime({
       strategies: [
         new ToolResultDecayStrategy({
@@ -31,7 +41,6 @@ describe("context management runtime integration", () => {
         }),
         new ScratchpadStrategy({
           scratchpadStore: store,
-          reminderTone: "informational",
         }),
         new ContextUtilizationReminderStrategy({
           budgetProfile: {
@@ -96,21 +105,8 @@ describe("context management runtime integration", () => {
       },
     });
 
-    const wrappedModel = wrapLanguageModel({
-      model: baseModel,
-      middleware: runtime.middleware,
-    });
-
-    const requestContext = {
-      contextManagement: {
-        conversationId: "conv-1",
-        agentId: "agent-1",
-        agentLabel: "Alpha",
-      },
-    };
-
-    const result = streamText({
-      model: wrappedModel,
+    const initialPreparedRequest = await runtime.prepareRequest({
+      requestContext,
       messages: [
         { role: "system", content: "You are helpful." },
         {
@@ -121,12 +117,68 @@ describe("context management runtime integration", () => {
           role: "tool",
           content: [{ type: "tool-result", toolCallId: "call-old", toolName: "fs_read", output: { type: "text", value: "old contents" } }],
         },
-        { role: "user", content: "Continue." },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Continue." }],
+        },
       ],
       tools: runtime.optionalTools,
+      model: modelRef,
+    });
+
+    let pendingUsageReporter = initialPreparedRequest.reportActualUsage;
+
+    const result = streamText({
+      model: baseModel,
+      messages: initialPreparedRequest.messages,
+      tools: runtime.optionalTools,
+      toolChoice: initialPreparedRequest.toolChoice,
       stopWhen: stepCountIs(2),
-      providerOptions: requestContext,
-      experimental_context: requestContext,
+      providerOptions: initialPreparedRequest.providerOptions,
+      experimental_context: {
+        [CONTEXT_MANAGEMENT_KEY]: requestContext,
+      },
+      prepareStep: async (step) => {
+        const lastCompletedStep = step.steps.at(-1);
+        if (lastCompletedStep) {
+          await pendingUsageReporter?.(lastCompletedStep.usage?.inputTokens);
+          pendingUsageReporter = undefined;
+        }
+
+        if (step.stepNumber === 0) {
+          return {
+            messages: initialPreparedRequest.messages,
+            providerOptions: initialPreparedRequest.providerOptions,
+            toolChoice: initialPreparedRequest.toolChoice,
+            experimental_context: {
+              [CONTEXT_MANAGEMENT_KEY]: requestContext,
+            },
+          };
+        }
+
+        const preparedRequest = await runtime.prepareRequest({
+          requestContext,
+          messages: step.messages,
+          tools: runtime.optionalTools,
+          model: modelRef,
+        });
+        pendingUsageReporter = preparedRequest.reportActualUsage;
+
+        return {
+          messages: preparedRequest.messages,
+          providerOptions: preparedRequest.providerOptions,
+          toolChoice: preparedRequest.toolChoice,
+          experimental_context: {
+            [CONTEXT_MANAGEMENT_KEY]: requestContext,
+          },
+        };
+      },
+      onFinish: async (event) => {
+        await pendingUsageReporter?.(
+          (event.steps.at(-1)?.usage ?? event.totalUsage)?.inputTokens
+        );
+        pendingUsageReporter = undefined;
+      },
     });
 
     expect(await result.text).toBe("done");
