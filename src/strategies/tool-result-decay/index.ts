@@ -683,21 +683,8 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     }
 
     await state.emitReminder({
-      kind: "tool-result-decay-warning",
+      kind: "tool-result-decay",
       content: lines.join("\n"),
-      attributes: {
-        tool_call_ids: atRisk.map((entry) => entry.toolCallId).join(","),
-        truncate_ids: atRisk
-          .filter((entry) => entry.forecastAction.type === "truncate")
-          .map((entry) => entry.toolCallId)
-          .join(","),
-        placeholder_ids: atRisk
-          .filter((entry) => entry.forecastAction.type === "placeholder")
-          .map((entry) => entry.toolCallId)
-          .join(","),
-        forecast_extra_tool_tokens: String(this.warningForecastExtraTokens),
-        forecast_tool_context_tokens: String(forecastToolContextTokens),
-      },
     });
   }
 }

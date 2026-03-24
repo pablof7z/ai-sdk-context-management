@@ -715,7 +715,7 @@ describe("ToolResultDecayStrategy", () => {
     await strategy.apply(state);
 
     expect(capturedReminders).toHaveLength(1);
-    expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
+    expect(capturedReminders[0].kind).toBe("tool-result-decay");
     expect(capturedReminders[0].content).toContain("call-0");
     expect(capturedReminders[0].content).toContain("read_file");
     expect(capturedReminders[0].content).toContain("truncated");
@@ -1087,7 +1087,7 @@ describe("ToolResultDecayStrategy", () => {
     expect(getToolResultOutput(state.prompt, "call-1")).toBe(hugeOutput);
   });
 
-  test("default forecast warning includes the full affected tool set and reminder attributes", async () => {
+  test("default forecast warning includes the full affected tool set", async () => {
     const mediumOutput = "x".repeat(300);
     const outputs = Array.from({ length: 5 }, (_, i) => ({
       id: `call-${i}`,
@@ -1101,11 +1101,9 @@ describe("ToolResultDecayStrategy", () => {
     const result = await strategy.apply(state);
 
     expect(capturedReminders).toHaveLength(1);
-    expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
+    expect(capturedReminders[0].kind).toBe("tool-result-decay");
     expect(capturedReminders[0].content).toContain("10,000");
-    expect(capturedReminders[0].attributes?.tool_call_ids).toBe("call-0,call-1,call-2,call-3");
-    expect(capturedReminders[0].attributes?.placeholder_ids).toBe("call-0");
-    expect(capturedReminders[0].attributes?.truncate_ids).toBe("call-1,call-2,call-3");
+    expect(capturedReminders[0].attributes).toBeUndefined();
     expect(result.payloads).toHaveProperty("warningToolCallIds");
     expect(result.payloads).toHaveProperty("warningPlaceholderIds");
     expect(result.payloads).toHaveProperty("warningTruncateIds");

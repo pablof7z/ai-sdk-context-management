@@ -45,15 +45,16 @@ So very small tool payloads can survive for many turns, around `~5k` tool tokens
 - `decayInputs`
   Whether tool-call inputs decay alongside tool results. Default: `true`.
 
-## Reminder Attributes
+## Warning Metadata
 
-When reminder delivery is enabled, decay warnings include:
+When reminder delivery is enabled, decay warnings stay as plain `<tool-result-decay>` blocks.
+Structured warning details remain available in the strategy payload and telemetry:
 
-- `tool_call_ids`
-- `truncate_ids`
-- `placeholder_ids`
-- `forecast_extra_tool_tokens`
-- `forecast_tool_context_tokens`
+- `warningToolCallIds`
+- `warningTruncateIds`
+- `warningPlaceholderIds`
+- `warningForecastExtraTokens`
+- `forecastToolContextTokens`
 
 ## Runnable Example
 

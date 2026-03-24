@@ -149,13 +149,14 @@ new ToolResultDecayStrategy({
 });
 ```
 
-Warnings are emitted through the runtime reminder path, either into `systemReminderContext` or inline in the prompt, with machine-readable attributes:
+Warnings are emitted through the runtime reminder path as plain `<tool-result-decay>` blocks.
+Structured warning details remain available in the strategy payload and telemetry:
 
-- `tool_call_ids`
-- `truncate_ids`
-- `placeholder_ids`
-- `forecast_extra_tool_tokens`
-- `forecast_tool_context_tokens`
+- `warningToolCallIds`
+- `warningTruncateIds`
+- `warningPlaceholderIds`
+- `warningForecastExtraTokens`
+- `forecastToolContextTokens`
 
 ## Runnable Examples
 
