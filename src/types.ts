@@ -180,7 +180,6 @@ export interface DecayedToolContext {
   toolCallId: string;
   input: unknown;
   output: LanguageModelV3ToolResultOutput;
-  action: "truncate" | "placeholder";
 }
 
 export interface ToolResultDecayPressureAnchor {
@@ -189,8 +188,8 @@ export interface ToolResultDecayPressureAnchor {
 }
 
 export interface ToolResultDecayStrategyOptions {
-  truncatedMaxTokens?: number;
-  placeholderFloorTokens?: number;
+  maxResultTokens?: number;
+  placeholderMinSourceTokens?: number;
   maxPromptTokens?: number;
   placeholder?: string | ((context: DecayedToolContext) => string);
   decayInputs?: boolean;
@@ -350,22 +349,19 @@ export interface SystemPromptCachingStrategyPayload {
 export interface ToolResultDecayStrategyPayload {
   kind: "tool-result-decay";
   currentPromptTokens: number;
-  truncatedMaxTokens: number;
-  placeholderFloorTokens: number;
+  maxResultTokens: number;
+  placeholderMinSourceTokens: number;
   pressureAnchors: ToolResultDecayPressureAnchor[];
   warningForecastExtraTokens: number;
   toolContextTokens?: number;
   depthFactor?: number;
   forecastToolContextTokens?: number;
   forecastDepthFactor?: number;
-  truncatedCount?: number;
   placeholderCount?: number;
-  inputTruncatedCount?: number;
   inputPlaceholderCount?: number;
   totalToolExchanges?: number;
   warningCount?: number;
   warningToolCallIds?: string[];
-  warningTruncateIds?: string[];
   warningPlaceholderIds?: string[];
 }
 

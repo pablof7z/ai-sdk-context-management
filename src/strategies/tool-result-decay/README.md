@@ -1,13 +1,13 @@
 # ToolResultDecayStrategy
 
-Compresses tool outputs by age and tool-context pressure while preserving the surrounding tool-call structure.
+Replaces oversized tool outputs with placeholders based on age and tool-context pressure while preserving the surrounding tool-call structure.
 
 ## What Changes In The Prompt
 
 - newest tool results stay verbatim
 - low-pressure tool sessions decay slowly even at deeper depths
-- medium-age or high-pressure results are truncated
-- the oldest or highest-pressure results become placeholders
+- older or higher-pressure large results become placeholders
+- smaller over-budget payloads stay intact instead of being partially shortened
 
 ## What The Agent Gets
 
@@ -32,16 +32,16 @@ So very small tool payloads can survive for many turns, around `~5k` tool tokens
 
 ## Important Options
 
-- `truncatedMaxTokens`
-  Sets the base truncation window before pressure/depth are applied. Default: `200`.
-- `placeholderFloorTokens`
-  Below this remaining budget, results become placeholders instead of prefixes. Default: `20`.
+- `maxResultTokens`
+  Sets the base per-result budget before pressure/depth are applied. Default: `200`.
+- `placeholderMinSourceTokens`
+  Minimum estimated size of a tool input or output before placeholdering is allowed. Smaller payloads stay intact instead. Default: `800`.
 - `pressureAnchors`
   Custom `(toolTokens, depthFactor)` control points for the pressure curve.
 - `warningForecastExtraTokens`
   Extra tool-context tokens to assume when forecasting "use it or lose it" warnings. Default: `10_000`.
 - `placeholder`
-  String or formatter function used for both truncated headers and placeholders.
+  String or formatter function used for placeholder text.
 - `decayInputs`
   Whether tool-call inputs decay alongside tool results. Default: `true`.
 
@@ -50,7 +50,6 @@ So very small tool payloads can survive for many turns, around `~5k` tool tokens
 When reminder delivery is enabled, decay warnings include:
 
 - `tool_call_ids`
-- `truncate_ids`
 - `placeholder_ids`
 - `forecast_extra_tool_tokens`
 - `forecast_tool_context_tokens`

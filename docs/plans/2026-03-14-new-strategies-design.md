@@ -9,27 +9,24 @@
 
 ### ToolResultDecayStrategy
 
-Graduated compression of tool results by age. Recent results stay full, medium-age results get truncated, old results become placeholders. The reasoning chain (tool calls, text messages) stays intact — only tool result content is affected.
+Pressure-aware decay of tool results by age. Recent results stay full, oversized older results become placeholders, and smaller over-budget payloads stay as-is. The reasoning chain (tool calls, text messages) stays intact — only tool result content is affected.
 
 ```ts
 interface ToolResultDecayStrategyOptions {
-  // Results in the last N tool exchanges stay untouched. Default: 3
-  keepFullResultCount?: number;
+  // Base per-result budget before depth/pressure are applied. Default: 200
+  maxResultTokens?: number;
 
-  // Results older than keepFullResultCount get truncated to this many tokens. Default: 200
-  truncatedMaxTokens?: number;
-
-  // Results older than keepFullResultCount + truncateWindowCount become placeholders. Default: 5
-  truncateWindowCount?: number;
+  // Minimum estimated size before a placeholder is allowed. Smaller payloads stay full. Default: 800
+  placeholderMinSourceTokens?: number;
 
   // Placeholder for fully decayed results. Default: "[result omitted]"
-  placeholder?: string | ((toolName: string, toolCallId: string) => string);
+  placeholder?: string | ((context: DecayedToolContext) => string);
 
   estimator?: PromptTokenEstimator;
 }
 ```
 
-Three zones: full → truncated → placeholder. Maps to Manus's graduated hierarchy and JetBrains's observation masking finding.
+Two zones: full → placeholder. Large payloads are hidden; smaller ones are left intact.
 
 ### SlidingWindowStrategy with head preservation
 

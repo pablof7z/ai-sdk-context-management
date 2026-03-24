@@ -225,9 +225,9 @@ describe("ToolResultDecayStrategy", () => {
     expect(getToolResultOutput(state.prompt, "call-0")).toBe(largeOutput);
   });
 
-  test("large result at depth 1 is truncated to baseMaxChars", async () => {
+  test("large result at depth 1 becomes a placeholder", async () => {
     // 2 exchanges: call-0 at depth 1, call-1 at depth 0
-    // truncatedMaxTokens=200 → baseMaxChars=800
+    // maxResultTokens=200 → baseMaxChars=800
     // depth 1 budget = 800/1 = 800
     const largeOutput = "x".repeat(5000);
     const outputs = [
@@ -241,13 +241,12 @@ describe("ToolResultDecayStrategy", () => {
     await strategy.apply(state);
 
     const output = getToolResultOutput(state.prompt, "call-0");
-    expect(output!.length).toBeLessThanOrEqual(800);
-    expect(output!.length).toBeGreaterThan(0);
+    expect(output).toBe("[result omitted]");
     // call-1 (depth 0) untouched
     expect(getToolResultOutput(state.prompt, "call-1")).toBe("recent");
   });
 
-  test("same result at depth 2 is truncated to baseMaxChars/2", async () => {
+  test("same large result at deeper depths still becomes a placeholder", async () => {
     // 3 exchanges: call-0 at depth 2, call-1 at depth 1, call-2 at depth 0
     const largeOutput = "x".repeat(5000);
     const outputs = [
@@ -256,17 +255,14 @@ describe("ToolResultDecayStrategy", () => {
       { id: "call-2", name: "tool_2", output: { type: "text" as const, value: "recent" } },
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
-    const strategy = createDepthOnlyStrategy(); // truncatedMaxTokens=200 → baseMaxChars=800
+    const strategy = createDepthOnlyStrategy(); // maxResultTokens=200 → baseMaxChars=800
     const { state } = createMockState(prompt);
 
     await strategy.apply(state);
 
-    // call-0: depth 2, budget = 800/2 = 400
-    const output0 = getToolResultOutput(state.prompt, "call-0");
-    expect(output0!.length).toBeLessThanOrEqual(400);
-    // call-1: depth 1, budget = 800/1 = 800
-    const output1 = getToolResultOutput(state.prompt, "call-1");
-    expect(output1!.length).toBeLessThanOrEqual(800);
+    expect(getToolResultOutput(state.prompt, "call-0")).toBe("[result omitted]");
+    expect(getToolResultOutput(state.prompt, "call-1")).toBe("[result omitted]");
+    expect(getToolResultOutput(state.prompt, "call-2")).toBe("recent");
   });
 
   test("small result at deep depth stays untouched (under budget)", async () => {
@@ -288,8 +284,8 @@ describe("ToolResultDecayStrategy", () => {
   });
 
   test("result at very deep depth is placeholdered", async () => {
-    // With defaults: placeholderFloorTokens=20, placeholderFloorChars=80
-    // baseMaxChars=800, so placeholder when 800/d < 80, i.e. d > 10
+    // With defaults: placeholderMinSourceTokens=800, placeholderMinSourceChars=3200.
+    // baseMaxChars=800, so a 5000-char result is over budget and above the placeholder minimum.
     // 12 exchanges: call-0 at depth 11
     const largeOutput = "x".repeat(5000);
     const outputs = Array.from({ length: 12 }, (_, i) => ({
@@ -305,6 +301,24 @@ describe("ToolResultDecayStrategy", () => {
 
     expect(getToolResultOutput(state.prompt, "call-0")).toBe("[result omitted]");
     expect(capturedRemoved.some((e) => e.toolCallId === "call-0")).toBe(true);
+  });
+
+  test("small results at very deep depth stay full instead of becoming placeholders", async () => {
+    const mediumOutput = "x".repeat(100);
+    const outputs = Array.from({ length: 12 }, (_, i) => ({
+      id: `call-${i}`,
+      name: `tool_${i}`,
+      output: { type: "text" as const, value: i === 0 ? mediumOutput : "ok" },
+    }));
+    const prompt = makeToolPromptWithOutputs(outputs);
+    const strategy = createDepthOnlyStrategy();
+    const { state, capturedRemoved } = createMockState(prompt);
+
+    await strategy.apply(state);
+
+    const output = getToolResultOutput(state.prompt, "call-0");
+    expect(output).toBe(mediumOutput);
+    expect(capturedRemoved.some((e) => e.toolCallId === "call-0")).toBe(false);
   });
 
   test("pinned results are never modified", async () => {
@@ -390,7 +404,7 @@ describe("ToolResultDecayStrategy", () => {
     const strategy = createDepthOnlyStrategy({
       placeholder: (ctx) => {
         captured.push({ ...ctx });
-        return `[${ctx.toolName}:${ctx.toolCallId} ${ctx.action}]`;
+        return `[${ctx.toolName}:${ctx.toolCallId}]`;
       },
     });
     const { state } = createMockState(prompt);
@@ -398,10 +412,10 @@ describe("ToolResultDecayStrategy", () => {
     await strategy.apply(state);
 
     // call-0 at depth 11 should be placeholdered
-    expect(getToolResultOutput(state.prompt, "call-0")).toBe("[tool_0:call-0 placeholder]");
+    expect(getToolResultOutput(state.prompt, "call-0")).toBe("[tool_0:call-0]");
 
     // Verify context was populated
-    const placeholderCtx = captured.find((c) => c.toolCallId === "call-0" && c.action === "placeholder");
+    const placeholderCtx = captured.find((c) => c.toolCallId === "call-0");
     expect(placeholderCtx).toBeDefined();
     expect(placeholderCtx!.toolName).toBe("tool_0");
     expect(placeholderCtx!.output).toEqual({ type: "text", value: largeOutput });
@@ -447,8 +461,8 @@ describe("ToolResultDecayStrategy", () => {
     expect(strategy.name).toBe("tool-result-decay");
   });
 
-  test("truncates JSON output when it exceeds depth budget", async () => {
-    const largeJson = { data: "x".repeat(2000), nested: { key: "value" } };
+  test("large JSON outputs become placeholders once they exceed the budget and minimum source size", async () => {
+    const largeJson = { data: "x".repeat(4000), nested: { key: "value" } };
     // 3 exchanges: call-0 at depth 2, call-1 at depth 1, call-2 at depth 0
     const outputs = [
       { id: "call-0", name: "tool_0", output: { type: "json" as const, value: largeJson } },
@@ -457,7 +471,7 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 50, // baseMaxChars = 200
+      maxResultTokens: 50, // baseMaxChars = 200
     });
     const { state } = createMockState(prompt);
 
@@ -467,18 +481,18 @@ describe("ToolResultDecayStrategy", () => {
     const fullOutput = getRawToolResultOutput(state.prompt, "call-2");
     expect(fullOutput?.type).toBe("json");
 
-    // call-1 at depth 1: budget = 200, large JSON > 200 → truncated
+    // call-1 at depth 1: budget = 200, large JSON > 200 and over the placeholder minimum
     const output1 = getRawToolResultOutput(state.prompt, "call-1");
     expect(output1?.type).toBe("text");
     if (output1?.type === "text") {
-      expect(output1.value.length).toBeLessThanOrEqual(200);
+      expect(output1.value).toBe("[result omitted]");
     }
 
-    // call-0 at depth 2: budget = 100, also truncated
+    // call-0 at depth 2: budget = 100, also placeholdered
     const output0 = getRawToolResultOutput(state.prompt, "call-0");
     expect(output0?.type).toBe("text");
     if (output0?.type === "text") {
-      expect(output0.value.length).toBeLessThanOrEqual(100);
+      expect(output0.value).toBe("[result omitted]");
     }
   });
 
@@ -502,7 +516,7 @@ describe("ToolResultDecayStrategy", () => {
     }
   });
 
-  test("strips binary content from content-type outputs when truncated", async () => {
+  test("large content outputs become placeholders", async () => {
     const imageOutput: LanguageModelV3ToolResultOutput = {
       type: "content",
       value: [
@@ -523,18 +537,14 @@ describe("ToolResultDecayStrategy", () => {
     await strategy.apply(state);
 
     // call-0 at depth 1: image content is large (~50000 chars), budget = 800
-    // Content gets flattened to text (no base64) and truncated
     const output = getRawToolResultOutput(state.prompt, "call-0");
     expect(output?.type).toBe("text");
     if (output?.type === "text") {
-      expect(output.value).toContain("Here is the screenshot");
-      expect(output.value).toContain("[image: image/png]");
-      expect(output.value).not.toContain("x".repeat(100));
-      expect(output.value.length).toBeLessThanOrEqual(800);
+      expect(output.value).toBe("[result omitted]");
     }
   });
 
-  test("content output with file-data includes filename in descriptor", async () => {
+  test("large file content outputs become placeholders", async () => {
     const fileOutput: LanguageModelV3ToolResultOutput = {
       type: "content",
       value: [
@@ -557,11 +567,11 @@ describe("ToolResultDecayStrategy", () => {
     const output = getRawToolResultOutput(state.prompt, "call-0");
     expect(output?.type).toBe("text");
     if (output?.type === "text") {
-      expect(output.value).toContain("[file: application/pdf, report.pdf]");
+      expect(output.value).toBe("[result omitted]");
     }
   });
 
-  test("error-text output is truncated like text", async () => {
+  test("error-text output stays full when it is below the placeholder minimum source size", async () => {
     const largeError = `Error: ${"detail ".repeat(200)}`;
     // 3 exchanges
     const outputs = [
@@ -571,29 +581,20 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 25, // baseMaxChars = 100
+      maxResultTokens: 25, // baseMaxChars = 100
     });
     const { state } = createMockState(prompt);
 
     await strategy.apply(state);
 
-    // call-0 at depth 2: budget = 100/2 = 50
     const output0 = getRawToolResultOutput(state.prompt, "call-0");
-    expect(output0?.type).toBe("text");
-    if (output0?.type === "text") {
-      expect(output0.value.length).toBeLessThanOrEqual(50);
-    }
+    expect(output0?.type).toBe("error-text");
 
-    // call-1 at depth 1: budget = 100/1 = 100
     const output1 = getRawToolResultOutput(state.prompt, "call-1");
-    expect(output1?.type).toBe("text");
-    if (output1?.type === "text") {
-      expect(output1.value.length).toBeLessThanOrEqual(100);
-      expect(output1.value).toContain("Error:");
-    }
+    expect(output1?.type).toBe("error-text");
   });
 
-  test("error-json output is serialized and truncated", async () => {
+  test("error-json output stays full when it is below the placeholder minimum source size", async () => {
     const outputs = [
       { id: "call-0", name: "tool_0", output: { type: "error-json" as const, value: { error: "x".repeat(2000) } } },
       { id: "call-1", name: "tool_1", output: { type: "error-json" as const, value: { error: "x".repeat(2000) } } },
@@ -601,21 +602,17 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 50, // baseMaxChars = 200
+      maxResultTokens: 50, // baseMaxChars = 200
     });
     const { state } = createMockState(prompt);
 
     await strategy.apply(state);
 
-    // call-0 at depth 2: budget = 200/2 = 100
     const output0 = getRawToolResultOutput(state.prompt, "call-0");
-    expect(output0?.type).toBe("text");
-    if (output0?.type === "text") {
-      expect(output0.value.length).toBeLessThanOrEqual(100);
-    }
+    expect(output0?.type).toBe("error-json");
   });
 
-  test("execution-denied output is left untouched in truncation", async () => {
+  test("execution-denied output is left untouched when it stays under budget", async () => {
     const outputs = [
       { id: "call-0", name: "tool_0", output: { type: "execution-denied" as const, reason: "user denied" } },
       { id: "call-1", name: "tool_1", output: { type: "text" as const, value: "ok" } },
@@ -626,12 +623,11 @@ describe("ToolResultDecayStrategy", () => {
 
     await strategy.apply(state);
 
-    // call-0 at depth 1: execution-denied is always returned as-is by truncateToolResultOutput
     const output = getRawToolResultOutput(state.prompt, "call-0");
     expect(output?.type).toBe("execution-denied");
   });
 
-  test("mixed output types are each handled correctly", async () => {
+  test("mixed output types keep small structured values and placeholder large payloads", async () => {
     const outputs = [
       { id: "call-0", name: "glob", output: { type: "json" as const, value: { files: Array.from({ length: 100 }, (_, i) => `file-${i}.txt`) } } },
       { id: "call-1", name: "read", output: { type: "text" as const, value: "x".repeat(5000) } },
@@ -647,7 +643,7 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 100, // baseMaxChars = 400
+      maxResultTokens: 100, // baseMaxChars = 400
     });
     const { state } = createMockState(prompt);
 
@@ -660,26 +656,23 @@ describe("ToolResultDecayStrategy", () => {
     const call3 = getRawToolResultOutput(state.prompt, "call-3");
     expect(call3?.type).toBe("json");
 
-    // call-2: depth 2, budget = 200. Image content (~100016 chars) → flattened and truncated
+    // call-2: depth 2, budget = 200. Large content becomes a placeholder.
     const call2 = getRawToolResultOutput(state.prompt, "call-2");
     expect(call2?.type).toBe("text");
     if (call2?.type === "text") {
-      expect(call2.value.length).toBeLessThanOrEqual(200);
+      expect(call2.value).toBe("[result omitted]");
     }
 
-    // call-1: depth 3, budget = 133. Long text (5000 chars) → truncated
+    // call-1: depth 3, budget = 133. Long text becomes a placeholder.
     const call1 = getRawToolResultOutput(state.prompt, "call-1");
     expect(call1?.type).toBe("text");
     if (call1?.type === "text") {
-      expect(call1.value.length).toBeLessThanOrEqual(133);
+      expect(call1.value).toBe("[result omitted]");
     }
 
-    // call-0: depth 4, budget = 100. Large JSON → truncated
+    // call-0: depth 4 is over budget, but the JSON payload is still below the placeholder minimum size.
     const call0 = getRawToolResultOutput(state.prompt, "call-0");
-    expect(call0?.type).toBe("text");
-    if (call0?.type === "text") {
-      expect(call0.value.length).toBeLessThanOrEqual(100);
-    }
+    expect(call0?.type).toBe("json");
   });
 
   test("warning reminder emitted for large at-risk results", async () => {
@@ -690,7 +683,7 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 2000, // baseMaxChars = 8000
+      maxResultTokens: 2000, // baseMaxChars = 8000
     });
     const { state, capturedReminders } = createMockState(prompt);
 
@@ -698,7 +691,7 @@ describe("ToolResultDecayStrategy", () => {
 
     expect(capturedReminders).toHaveLength(1);
     expect(capturedReminders[0].content).toContain("call-0");
-    expect(capturedReminders[0].content).toContain("truncated");
+    expect(capturedReminders[0].content).toContain("placeholder");
   });
 
   test("warning reminder emitted for very large results exceeding baseMaxChars", async () => {
@@ -708,7 +701,7 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 200, // baseMaxChars = 800
+      maxResultTokens: 200, // baseMaxChars = 800
     });
     const { state, capturedReminders } = createMockState(prompt);
 
@@ -718,7 +711,7 @@ describe("ToolResultDecayStrategy", () => {
     expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
     expect(capturedReminders[0].content).toContain("call-0");
     expect(capturedReminders[0].content).toContain("read_file");
-    expect(capturedReminders[0].content).toContain("truncated");
+    expect(capturedReminders[0].content).toContain("placeholder");
   });
 
   test("no warning for small results", async () => {
@@ -766,19 +759,24 @@ describe("ToolResultDecayStrategy", () => {
     const result = await strategy.apply(state);
 
     expect(result.reason).toBe("tool-results-decayed");
-    expect(result.payloads).toHaveProperty("truncatedMaxTokens");
-    expect(result.payloads).toHaveProperty("placeholderFloorTokens");
-    expect(result.payloads).toHaveProperty("truncatedCount");
+    expect(result.payloads).toHaveProperty("maxResultTokens");
+    expect(result.payloads).toHaveProperty("placeholderMinSourceTokens");
     expect(result.payloads).toHaveProperty("placeholderCount");
+    expect(result.payloads).toHaveProperty("inputPlaceholderCount");
     expect(result.payloads).toHaveProperty("totalToolExchanges", 5);
     expect(result.payloads).toHaveProperty("warningCount");
     // Should NOT have old fields
     expect(result.payloads).not.toHaveProperty("keepFullResultCount");
     expect(result.payloads).not.toHaveProperty("truncateWindowCount");
+    expect(result.payloads).not.toHaveProperty("truncatedMaxTokens");
+    expect(result.payloads).not.toHaveProperty("placeholderFloorTokens");
+    expect(result.payloads).not.toHaveProperty("truncatedCount");
+    expect(result.payloads).not.toHaveProperty("inputTruncatedCount");
   });
 
-  test("deeper exchanges get progressively smaller budgets", async () => {
-    // 5 exchanges all with 1000-char results, truncatedMaxTokens=100 → baseMaxChars=400
+  test("older small results stay full even when they exceed the shrinking budget", async () => {
+    // 5 exchanges all with 1000-char results, maxResultTokens=100 → baseMaxChars=400
+    // 1000 chars is below the default placeholder minimum source size (3200 chars).
     const output = "x".repeat(1000);
     const outputs = Array.from({ length: 5 }, (_, i) => ({
       id: `call-${i}`,
@@ -787,34 +785,18 @@ describe("ToolResultDecayStrategy", () => {
     }));
     const prompt = makeToolPromptWithOutputs(outputs);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 100, // baseMaxChars = 400
+      maxResultTokens: 100, // baseMaxChars = 400
     });
     const { state } = createMockState(prompt);
 
     await strategy.apply(state);
 
-    // call-4: depth 0 → full (1000 chars)
-    expect(getToolResultOutput(state.prompt, "call-4")!.length).toBe(1000);
-    // call-3: depth 1 → budget 400 → truncated to 400
-    expect(getToolResultOutput(state.prompt, "call-3")!.length).toBeLessThanOrEqual(400);
-    // call-2: depth 2 → budget 200 → truncated to 200
-    expect(getToolResultOutput(state.prompt, "call-2")!.length).toBeLessThanOrEqual(200);
-    // call-1: depth 3 → budget 133 → truncated to 133
-    expect(getToolResultOutput(state.prompt, "call-1")!.length).toBeLessThanOrEqual(133);
-    // call-0: depth 4 → budget 100 → truncated to 100
-    expect(getToolResultOutput(state.prompt, "call-0")!.length).toBeLessThanOrEqual(100);
-
-    // Verify progressive shrinking
-    const len3 = getToolResultOutput(state.prompt, "call-3")!.length;
-    const len2 = getToolResultOutput(state.prompt, "call-2")!.length;
-    const len1 = getToolResultOutput(state.prompt, "call-1")!.length;
-    const len0 = getToolResultOutput(state.prompt, "call-0")!.length;
-    expect(len3).toBeGreaterThan(len2);
-    expect(len2).toBeGreaterThan(len1);
-    expect(len1).toBeGreaterThanOrEqual(len0);
+    for (let i = 0; i < 5; i++) {
+      expect(getToolResultOutput(state.prompt, `call-${i}`)).toBe(output);
+    }
   });
 
-  test("truncated results get header line when placeholder is a function", async () => {
+  test("placeholder formatter output replaces large results directly", async () => {
     // 2 exchanges: call-0 at depth 1 with large output
     const largeOutput = "x".repeat(5000);
     const entries = [
@@ -823,24 +805,19 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithInputs(entries);
     const strategy = createDepthOnlyStrategy({
-      placeholder: (ctx) => {
-        if (ctx.action === "truncate") {
-          return `[truncated: ${ctx.toolName}]\n`;
-        }
-        return `[omitted: ${ctx.toolName}]`;
-      },
+      placeholder: (ctx) => `[omitted: ${ctx.toolName}]`,
     });
     const { state } = createMockState(prompt);
 
     await strategy.apply(state);
 
-    // call-0 at depth 1: budget = 800. 5000 > 800 → truncated
+    // call-0 at depth 1: budget = 800. 5000 > 800 → placeholder
     const output = getToolResultOutput(state.prompt, "call-0");
     expect(output).toBeDefined();
-    expect(output!.startsWith("[truncated: fs_write]\n")).toBe(true);
+    expect(output).toBe("[omitted: fs_write]");
   });
 
-  test("truncated results get NO header when placeholder is a string", async () => {
+  test("placeholder strings replace large results directly", async () => {
     const largeOutput = "x".repeat(5000);
     const entries = [
       { id: "call-0", name: "fs_write", input: {}, output: { type: "text" as const, value: largeOutput } },
@@ -852,11 +829,10 @@ describe("ToolResultDecayStrategy", () => {
 
     await strategy.apply(state);
 
-    // call-0 at depth 1: truncated, but string placeholder means no header
+    // call-0 at depth 1: placeholder string is used as-is
     const output = getToolResultOutput(state.prompt, "call-0");
     expect(output).toBeDefined();
-    expect(output!.startsWith("x")).toBe(true);
-    expect(output!.length).toBeLessThanOrEqual(800);
+    expect(output).toBe("<removed>");
   });
 
   test("tool-call inputs are decayed when decayInputs is true", async () => {
@@ -873,15 +849,13 @@ describe("ToolResultDecayStrategy", () => {
 
     await strategy.apply(state);
 
-    // call-0 at depth 2: input is ~5040 chars, budget = 800/2 = 400 → truncated
+    // call-0 at depth 2: input is large enough to be omitted.
     const input0 = getToolCallInput(state.prompt, "call-0") as Record<string, unknown>;
-    expect(input0._truncated).toBeDefined();
-    expect(typeof input0._truncated).toBe("string");
-    expect((input0._truncated as string).length).toBeLessThanOrEqual(400);
+    expect(input0._omitted).toBe(true);
 
-    // call-1 at depth 1: input is ~5040 chars, budget = 800/1 = 800 → truncated
+    // call-1 at depth 1: input is also omitted.
     const input1 = getToolCallInput(state.prompt, "call-1") as Record<string, unknown>;
-    expect(input1._truncated).toBeDefined();
+    expect(input1._omitted).toBe(true);
 
     // call-2 at depth 0: always full
     const input2 = getToolCallInput(state.prompt, "call-2") as Record<string, unknown>;
@@ -905,8 +879,8 @@ describe("ToolResultDecayStrategy", () => {
     expect(input0.content).toBe("y".repeat(5000));
   });
 
-  test("large inputs at shallow depth are truncated, small inputs stay full", async () => {
-    // 3 exchanges: large input at depth 1 is truncated; small input at depth 2 stays full
+  test("large inputs at shallow depth are omitted, small inputs stay full", async () => {
+    // 3 exchanges: large input at depth 1 is omitted; small input at depth 2 stays full
     const entries = [
       { id: "call-0", name: "tool_0", input: { q: "tiny" }, output: { type: "text" as const, value: "ok" } },
       { id: "call-1", name: "fs_write", input: { content: "z".repeat(5000) }, output: { type: "text" as const, value: "ok" } },
@@ -922,9 +896,9 @@ describe("ToolResultDecayStrategy", () => {
     const input0 = getToolCallInput(state.prompt, "call-0") as Record<string, unknown>;
     expect(input0.q).toBe("tiny");
 
-    // call-1 at depth 1: input ~5020 chars, budget = 800 → truncated
+    // call-1 at depth 1: input ~5020 chars, budget = 800 → omitted
     const input1 = getToolCallInput(state.prompt, "call-1") as Record<string, unknown>;
-    expect(input1._truncated).toBeDefined();
+    expect(input1._omitted).toBe(true);
   });
 
   test("warning text uses formatter output when placeholder is a function", async () => {
@@ -934,7 +908,7 @@ describe("ToolResultDecayStrategy", () => {
     ];
     const prompt = makeToolPromptWithInputs(entries);
     const strategy = createDepthOnlyStrategy({
-      truncatedMaxTokens: 200,
+      maxResultTokens: 200,
       placeholder: (ctx) => `[${ctx.toolName} id:${ctx.toolCallId}]`,
     });
     const { state, capturedReminders } = createMockState(prompt);
@@ -968,16 +942,16 @@ describe("ToolResultDecayStrategy", () => {
       expect(getToolResultOutput(state.prompt, `batch-${i}`)).toBe(largeOutput);
     }
 
-    // The previous call is depth 1 → truncated (5000 > budget of 800)
+    // The previous call is depth 1, but it is small enough to stay intact.
     const prevOutput = getToolResultOutput(state.prompt, "prev-call");
     expect(prevOutput).toBeDefined();
-    expect(prevOutput!.length).toBeLessThanOrEqual(800);
+    expect(prevOutput).toBe("previous result");
 
     // No batch call should appear in removed exchanges
     expect(capturedRemoved.filter((e) => e.toolCallId.startsWith("batch-"))).toHaveLength(0);
   });
 
-  test("payloads include inputTruncatedCount and inputPlaceholderCount", async () => {
+  test("payloads include inputPlaceholderCount only", async () => {
     const largeInput = { content: "y".repeat(5000) };
     const entries = Array.from({ length: 5 }, (_, i) => ({
       id: `call-${i}`,
@@ -991,10 +965,9 @@ describe("ToolResultDecayStrategy", () => {
 
     const result = await strategy.apply(state);
 
-    expect(result.payloads).toHaveProperty("inputTruncatedCount");
     expect(result.payloads).toHaveProperty("inputPlaceholderCount");
-    expect(typeof (result.payloads as Record<string, unknown>).inputTruncatedCount).toBe("number");
     expect(typeof (result.payloads as Record<string, unknown>).inputPlaceholderCount).toBe("number");
+    expect(result.payloads).not.toHaveProperty("inputTruncatedCount");
   });
 
   test("inputs at very deep depth are omitted", async () => {
@@ -1012,9 +985,28 @@ describe("ToolResultDecayStrategy", () => {
 
     await strategy.apply(state);
 
-    // call-0 at depth 11: 800/11 = 72 < placeholderFloor (80) → placeholder
+    // call-0 at depth 11: the large input is over budget and above the placeholder minimum.
     const input0 = getToolCallInput(state.prompt, "call-0") as Record<string, unknown>;
     expect(input0._omitted).toBe(true);
+  });
+
+  test("small inputs at very deep depth stay full instead of being omitted", async () => {
+    const smallInput = { content: "y".repeat(100) };
+    const entries = Array.from({ length: 12 }, (_, i) => ({
+      id: `call-${i}`,
+      name: `tool_${i}`,
+      input: i === 0 ? smallInput : { q: "small" },
+      output: { type: "text" as const, value: "ok" },
+    }));
+    const prompt = makeToolPromptWithInputs(entries);
+    const strategy = createDepthOnlyStrategy();
+    const { state } = createMockState(prompt);
+
+    await strategy.apply(state);
+
+    const input0 = getToolCallInput(state.prompt, "call-0") as Record<string, unknown>;
+    expect(input0._omitted).toBeUndefined();
+    expect(input0.content).toBe("y".repeat(100));
   });
 
   test("default pressure anchors keep low-token tool results intact at deep depths", async () => {
@@ -1033,7 +1025,7 @@ describe("ToolResultDecayStrategy", () => {
     expect(capturedRemoved).toHaveLength(0);
   });
 
-  test("default pressure anchors reach near-placeholder budgets around 5k tool tokens by depth 10", async () => {
+  test("default pressure anchors still keep medium results intact below the placeholder minimum source size", async () => {
     const largeOutput = "x".repeat(1_800);
     const outputs = Array.from({ length: 11 }, (_, i) => ({
       id: `call-${i}`,
@@ -1047,13 +1039,11 @@ describe("ToolResultDecayStrategy", () => {
     await strategy.apply(state);
 
     const output0 = getToolResultOutput(state.prompt, "call-0");
-    expect(output0).toBeDefined();
-    expect(output0!.length).toBeLessThanOrEqual(80);
-    expect(output0!.length).toBeGreaterThan(0);
+    expect(output0).toBe(largeOutput);
   });
 
   test("default pressure anchors placeholder around 5k-plus tool tokens by depth 11", async () => {
-    const largeOutput = "x".repeat(1_800);
+    const largeOutput = "x".repeat(3_500);
     const outputs = Array.from({ length: 12 }, (_, i) => ({
       id: `call-${i}`,
       name: `tool_${i}`,
@@ -1069,7 +1059,7 @@ describe("ToolResultDecayStrategy", () => {
     expect(capturedRemoved.some((entry) => entry.toolCallId === "call-0")).toBe(true);
   });
 
-  test("default pressure anchors truncate depth-1 results when tool context is above 50k tokens", async () => {
+  test("default pressure anchors still placeholder depth-1 results when tool context is above 50k tokens", async () => {
     const hugeOutput = "x".repeat(120_000);
     const outputs = [
       { id: "call-0", name: "tool_0", output: { type: "text" as const, value: hugeOutput } },
@@ -1083,19 +1073,19 @@ describe("ToolResultDecayStrategy", () => {
 
     const output0 = getToolResultOutput(state.prompt, "call-0");
     expect(output0).toBeDefined();
-    expect(output0!.length).toBeLessThanOrEqual(160);
+    expect(output0).toBe("[result omitted]");
     expect(getToolResultOutput(state.prompt, "call-1")).toBe(hugeOutput);
   });
 
-  test("default forecast warning includes the full affected tool set and reminder attributes", async () => {
-    const mediumOutput = "x".repeat(300);
+  test("warning payloads only report placeholder transitions", async () => {
+    const mediumOutput = "x".repeat(5000);
     const outputs = Array.from({ length: 5 }, (_, i) => ({
       id: `call-${i}`,
       name: `tool_${i}`,
       output: { type: "text" as const, value: mediumOutput },
     }));
     const prompt = makeToolPromptWithOutputs(outputs);
-    const strategy = new ToolResultDecayStrategy();
+    const strategy = createDepthOnlyStrategy({ maxResultTokens: 2000 });
     const { state, capturedReminders } = createMockState(prompt);
 
     const result = await strategy.apply(state);
@@ -1103,17 +1093,13 @@ describe("ToolResultDecayStrategy", () => {
     expect(capturedReminders).toHaveLength(1);
     expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
     expect(capturedReminders[0].content).toContain("10,000");
-    expect(capturedReminders[0].attributes?.tool_call_ids).toBe("call-0,call-1,call-2,call-3");
-    expect(capturedReminders[0].attributes?.placeholder_ids).toBe("call-0");
-    expect(capturedReminders[0].attributes?.truncate_ids).toBe("call-1,call-2,call-3");
+    expect(capturedReminders[0].attributes?.tool_call_ids).toBe("call-3");
+    expect(capturedReminders[0].attributes?.placeholder_ids).toBe("call-3");
+    expect(capturedReminders[0].attributes).not.toHaveProperty("truncate_ids");
     expect(result.payloads).toHaveProperty("warningToolCallIds");
     expect(result.payloads).toHaveProperty("warningPlaceholderIds");
-    expect(result.payloads).toHaveProperty("warningTruncateIds");
-    expect((result.payloads as Record<string, unknown>).warningToolCallIds).toEqual([
-      "call-0",
-      "call-1",
-      "call-2",
-      "call-3",
-    ]);
+    expect(result.payloads).not.toHaveProperty("warningTruncateIds");
+    expect((result.payloads as Record<string, unknown>).warningToolCallIds).toEqual(["call-3"]);
+    expect((result.payloads as Record<string, unknown>).warningPlaceholderIds).toEqual(["call-3"]);
   });
 });

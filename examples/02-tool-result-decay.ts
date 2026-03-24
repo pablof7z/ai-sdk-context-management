@@ -51,17 +51,15 @@ async function main() {
   const runtime = createContextManagementRuntime({
     strategies: [
       new ToolResultDecayStrategy({
-        truncatedMaxTokens: 60,
-        placeholderFloorTokens: 12,
+        maxResultTokens: 60,
+        placeholderMinSourceTokens: 12,
         pressureAnchors: [
           { toolTokens: 100, depthFactor: 1 },
           { toolTokens: 1_000, depthFactor: 2.5 },
         ],
         warningForecastExtraTokens: 2_000,
-        placeholder: ({ toolName, toolCallId, action }) =>
-          action === "placeholder"
-            ? `[${toolName} ${toolCallId} omitted -- re-read with your original tool if needed]`
-            : `[truncated ${toolName} ${toolCallId}]\n`,
+        placeholder: ({ toolName, toolCallId }) =>
+          `[${toolName} ${toolCallId} omitted -- re-read with your original tool if needed]`,
       }),
     ],
   });
@@ -116,8 +114,7 @@ async function main() {
   printPrompt("Prompt after ToolResultDecayStrategy", capturedPrompts[0]);
   console.log("\nWhat changed:");
   console.log("- the newest tool result stays full");
-  console.log("- the middle results are truncated with a header");
-  console.log("- the oldest results become re-read placeholders");
+  console.log("- older heavy results become re-read placeholders");
   console.log("- tool calls still remain, so the reasoning chain survives");
   console.log(`\nModel output: ${result.text}`);
 }

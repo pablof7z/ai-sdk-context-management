@@ -11,8 +11,8 @@ import type {
   ToolResultDecayStrategyOptions,
 } from "../../types.js";
 
-const DEFAULT_TRUNCATED_MAX_TOKENS = 200;
-const DEFAULT_PLACEHOLDER_FLOOR_TOKENS = 20;
+const DEFAULT_MAX_RESULT_TOKENS = 200;
+const DEFAULT_PLACEHOLDER_MIN_SOURCE_TOKENS = 800;
 const DEFAULT_PLACEHOLDER = "[result omitted]";
 const DEFAULT_WARNING_FORECAST_EXTRA_TOKENS = 10_000;
 const CHARS_PER_TOKEN = 4;
@@ -22,10 +22,7 @@ const DEFAULT_PRESSURE_ANCHORS: readonly ToolResultDecayPressureAnchor[] = [
   { toolTokens: 50_000, depthFactor: 5 },
 ];
 
-type DecayAction =
-  | { type: "full" }
-  | { type: "truncate"; maxChars: number }
-  | { type: "placeholder" };
+type DecayAction = { type: "full" } | { type: "placeholder" };
 
 function safeStringify(value: unknown): string {
   if (typeof value === "string") {
@@ -37,39 +34,6 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function flattenContentToText(
-  parts: Extract<LanguageModelV3ToolResultOutput, { type: "content" }>["value"]
-): string {
-  const segments: string[] = [];
-
-  for (const part of parts) {
-    switch (part.type) {
-      case "text":
-        segments.push(part.text);
-        break;
-      case "file-data":
-        segments.push(`[file: ${part.mediaType}${part.filename ? `, ${part.filename}` : ""}]`);
-        break;
-      case "image-data":
-        segments.push(`[image: ${part.mediaType}]`);
-        break;
-      case "file-url":
-      case "image-url":
-        segments.push(`[file: ${part.url}]`);
-        break;
-      case "file-id":
-      case "image-file-id":
-        segments.push("[file-ref]");
-        break;
-      case "custom":
-        segments.push("[custom content]");
-        break;
-    }
-  }
-
-  return segments.join("\n");
 }
 
 export function estimateOutputChars(output: LanguageModelV3ToolResultOutput): number {
@@ -86,7 +50,6 @@ export function estimateOutputChars(output: LanguageModelV3ToolResultOutput): nu
           case "text":
             return total + part.text.length;
           case "file-data":
-            return total + (part.data?.length ?? 0);
           case "image-data":
             return total + (part.data?.length ?? 0);
           default:
@@ -97,57 +60,6 @@ export function estimateOutputChars(output: LanguageModelV3ToolResultOutput): nu
       return (output.reason ?? "").length;
     default:
       return 0;
-  }
-}
-
-function truncateToolResultOutput(
-  output: LanguageModelV3ToolResultOutput,
-  maxChars: number
-): LanguageModelV3ToolResultOutput {
-  switch (output.type) {
-    case "text":
-    case "error-text":
-      return output.value.length <= maxChars
-        ? output
-        : { type: "text", value: output.value.slice(0, maxChars) };
-
-    case "json":
-    case "error-json": {
-      const serialized = safeStringify(output.value);
-      return serialized.length <= maxChars
-        ? output
-        : { type: "text", value: serialized.slice(0, maxChars) };
-    }
-
-    case "content": {
-      const flattened = flattenContentToText(output.value);
-      return flattened.length <= maxChars
-        ? { type: "text", value: flattened }
-        : { type: "text", value: flattened.slice(0, maxChars) };
-    }
-
-    case "execution-denied":
-      return output;
-
-    default:
-      return output;
-  }
-}
-
-function serializeOutputToText(output: LanguageModelV3ToolResultOutput): string {
-  switch (output.type) {
-    case "text":
-    case "error-text":
-      return output.value;
-    case "json":
-    case "error-json":
-      return safeStringify(output.value);
-    case "content":
-      return flattenContentToText(output.value);
-    case "execution-denied":
-      return output.reason ? `[execution denied: ${output.reason}]` : "[execution denied]";
-    default:
-      return safeStringify(output);
   }
 }
 
@@ -231,37 +143,20 @@ function actionSeverity(action: DecayAction): number {
   switch (action.type) {
     case "full":
       return 0;
-    case "truncate":
-      return 1;
     case "placeholder":
-      return 2;
+      return 1;
   }
 }
 
 function isForecastWorse(current: DecayAction, forecast: DecayAction): boolean {
-  const currentSeverity = actionSeverity(current);
-  const forecastSeverity = actionSeverity(forecast);
-
-  if (forecastSeverity > currentSeverity) {
-    return true;
-  }
-
-  if (forecastSeverity < currentSeverity) {
-    return false;
-  }
-
-  if (current.type === "truncate" && forecast.type === "truncate") {
-    return forecast.maxChars < current.maxChars;
-  }
-
-  return false;
+  return actionSeverity(forecast) > actionSeverity(current);
 }
 
 function classifyExchange(
   depth: number,
   estimatedChars: number,
   baseMaxChars: number,
-  placeholderFloorChars: number,
+  placeholderMinSourceChars: number,
   depthFactor: number
 ): DecayAction {
   if (depth === 0) {
@@ -273,14 +168,10 @@ function classifyExchange(
     return { type: "full" };
   }
 
-  const maxChars = Math.max(1, Math.floor(baseMaxChars / effectiveDepth));
+  const maxChars = Math.max(0, Math.floor(baseMaxChars / effectiveDepth));
 
-  if (maxChars < placeholderFloorChars) {
+  if (estimatedChars > maxChars && estimatedChars >= placeholderMinSourceChars) {
     return { type: "placeholder" };
-  }
-
-  if (estimatedChars > maxChars) {
-    return { type: "truncate", maxChars };
   }
 
   return { type: "full" };
@@ -298,8 +189,8 @@ interface AtRiskExchange {
 
 export class ToolResultDecayStrategy implements ContextManagementStrategy {
   readonly name = "tool-result-decay";
-  private readonly truncatedMaxTokens: number;
-  private readonly placeholderFloorTokens: number;
+  private readonly maxResultTokens: number;
+  private readonly placeholderMinSourceTokens: number;
   private readonly maxPromptTokens?: number;
   private readonly placeholder: string | ((context: DecayedToolContext) => string);
   private readonly decayInputs: boolean;
@@ -308,8 +199,11 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
   private readonly warningForecastExtraTokens: number;
 
   constructor(options: ToolResultDecayStrategyOptions = {}) {
-    this.truncatedMaxTokens = Math.max(0, Math.floor(options.truncatedMaxTokens ?? DEFAULT_TRUNCATED_MAX_TOKENS));
-    this.placeholderFloorTokens = Math.max(0, Math.floor(options.placeholderFloorTokens ?? DEFAULT_PLACEHOLDER_FLOOR_TOKENS));
+    this.maxResultTokens = Math.max(0, Math.floor(options.maxResultTokens ?? DEFAULT_MAX_RESULT_TOKENS));
+    this.placeholderMinSourceTokens = Math.max(
+      0,
+      Math.floor(options.placeholderMinSourceTokens ?? DEFAULT_PLACEHOLDER_MIN_SOURCE_TOKENS)
+    );
     this.maxPromptTokens = options.maxPromptTokens;
     this.placeholder = options.placeholder ?? DEFAULT_PLACEHOLDER;
     this.decayInputs = options.decayInputs ?? true;
@@ -325,18 +219,15 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     const currentPromptTokens = this.estimator.estimatePrompt(state.prompt)
       + (this.estimator.estimateTools?.(state.params?.tools) ?? 0);
 
-    if (
-      this.maxPromptTokens !== undefined &&
-      currentPromptTokens <= this.maxPromptTokens
-    ) {
+    if (this.maxPromptTokens !== undefined && currentPromptTokens <= this.maxPromptTokens) {
       return {
         reason: "below-token-threshold",
         workingTokenBudget: this.maxPromptTokens,
         payloads: {
           kind: "tool-result-decay",
           currentPromptTokens,
-          truncatedMaxTokens: this.truncatedMaxTokens,
-          placeholderFloorTokens: this.placeholderFloorTokens,
+          maxResultTokens: this.maxResultTokens,
+          placeholderMinSourceTokens: this.placeholderMinSourceTokens,
           pressureAnchors: this.pressureAnchors.map((anchor) => ({ ...anchor })),
           warningForecastExtraTokens: this.warningForecastExtraTokens,
         },
@@ -352,8 +243,8 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         payloads: {
           kind: "tool-result-decay",
           currentPromptTokens,
-          truncatedMaxTokens: this.truncatedMaxTokens,
-          placeholderFloorTokens: this.placeholderFloorTokens,
+          maxResultTokens: this.maxResultTokens,
+          placeholderMinSourceTokens: this.placeholderMinSourceTokens,
           pressureAnchors: this.pressureAnchors.map((anchor) => ({ ...anchor })),
           warningForecastExtraTokens: this.warningForecastExtraTokens,
         },
@@ -369,9 +260,9 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     }
 
     const sortedGroups = [...turnGroups.entries()].sort(([a], [b]) => a - b);
-
     const depthMap = new Map<string, number>();
     const numGroups = sortedGroups.length;
+
     for (let groupIdx = 0; groupIdx < numGroups; groupIdx++) {
       const depth = numGroups - 1 - groupIdx;
       for (const exchange of sortedGroups[groupIdx][1]) {
@@ -380,9 +271,8 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     }
 
     const sorted = sortedGroups.flatMap(([, group]) => group);
-
-    const baseMaxChars = this.truncatedMaxTokens * CHARS_PER_TOKEN;
-    const placeholderFloorChars = this.placeholderFloorTokens * CHARS_PER_TOKEN;
+    const baseMaxChars = this.maxResultTokens * CHARS_PER_TOKEN;
+    const placeholderMinSourceChars = this.placeholderMinSourceTokens * CHARS_PER_TOKEN;
 
     const charEstimates = new Map<string, number>();
     const originalOutputs = new Map<string, LanguageModelV3ToolResultOutput>();
@@ -423,7 +313,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       const estimatedChars = charEstimates.get(exchange.toolCallId) ?? 0;
       actions.set(
         exchange.toolCallId,
-        classifyExchange(depth, estimatedChars, baseMaxChars, placeholderFloorChars, depthFactor)
+        classifyExchange(depth, estimatedChars, baseMaxChars, placeholderMinSourceChars, depthFactor)
       );
     }
 
@@ -439,7 +329,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         const estimatedChars = inputCharEstimates.get(exchange.toolCallId) ?? 0;
         inputActions.set(
           exchange.toolCallId,
-          classifyExchange(depth, estimatedChars, baseMaxChars, placeholderFloorChars, depthFactor)
+          classifyExchange(depth, estimatedChars, baseMaxChars, placeholderMinSourceChars, depthFactor)
         );
       }
     }
@@ -457,7 +347,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         depth + 1,
         estimatedChars,
         baseMaxChars,
-        placeholderFloorChars,
+        placeholderMinSourceChars,
         forecastDepthFactor
       );
 
@@ -476,35 +366,25 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       });
     }
 
-    let truncatedCount = 0;
     let placeholderCount = 0;
     for (const action of actions.values()) {
-      if (action.type === "truncate") truncatedCount++;
-      if (action.type === "placeholder") placeholderCount++;
+      if (action.type === "placeholder") {
+        placeholderCount++;
+      }
     }
 
-    let inputTruncatedCount = 0;
     let inputPlaceholderCount = 0;
     if (this.decayInputs) {
       for (const action of inputActions.values()) {
-        if (action.type === "truncate") inputTruncatedCount++;
-        if (action.type === "placeholder") inputPlaceholderCount++;
+        if (action.type === "placeholder") {
+          inputPlaceholderCount++;
+        }
       }
     }
 
     const warningToolCallIds = atRiskExchanges.map((entry) => entry.toolCallId);
-    const warningTruncateIds = atRiskExchanges
-      .filter((entry) => entry.forecastAction.type === "truncate")
-      .map((entry) => entry.toolCallId);
-    const warningPlaceholderIds = atRiskExchanges
-      .filter((entry) => entry.forecastAction.type === "placeholder")
-      .map((entry) => entry.toolCallId);
-
-    const hasMutations =
-      truncatedCount > 0 ||
-      placeholderCount > 0 ||
-      inputTruncatedCount > 0 ||
-      inputPlaceholderCount > 0;
+    const warningPlaceholderIds = atRiskExchanges.map((entry) => entry.toolCallId);
+    const hasMutations = placeholderCount > 0 || inputPlaceholderCount > 0;
 
     if (!hasMutations) {
       if (atRiskExchanges.length > 0) {
@@ -521,17 +401,14 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
           depthFactor,
           forecastToolContextTokens,
           forecastDepthFactor,
-          truncatedMaxTokens: this.truncatedMaxTokens,
-          placeholderFloorTokens: this.placeholderFloorTokens,
-          truncatedCount: 0,
+          maxResultTokens: this.maxResultTokens,
+          placeholderMinSourceTokens: this.placeholderMinSourceTokens,
           placeholderCount: 0,
-          inputTruncatedCount: 0,
           inputPlaceholderCount: 0,
           totalToolExchanges: exchanges.size,
           warningCount: atRiskExchanges.length,
           warningForecastExtraTokens: this.warningForecastExtraTokens,
           warningToolCallIds,
-          warningTruncateIds,
           warningPlaceholderIds,
           pressureAnchors: this.pressureAnchors.map((anchor) => ({ ...anchor })),
         },
@@ -557,43 +434,22 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
             continue;
           }
 
-          if (action.type === "truncate") {
-            if (typeof this.placeholder === "function") {
-              const header = this.placeholder({
-                toolName: part.toolName,
-                toolCallId: part.toolCallId,
-                input: inputs.get(part.toolCallId),
-                output: originalOutputs.get(part.toolCallId)!,
-                action: "truncate",
-              });
-              const headerChars = header.length;
-              const contentBudget = Math.max(0, action.maxChars - headerChars);
-              const truncated = truncateToolResultOutput(part.output, contentBudget);
-              const truncatedValue = serializeOutputToText(truncated);
-              part.output = { type: "text", value: header + truncatedValue };
-            } else {
-              part.output = truncateToolResultOutput(part.output, action.maxChars);
-            }
-          } else if (action.type === "placeholder") {
-            const placeholderText =
-              typeof this.placeholder === "function"
-                ? this.placeholder({
-                    toolName: part.toolName,
-                    toolCallId: part.toolCallId,
-                    input: inputs.get(part.toolCallId),
-                    output: originalOutputs.get(part.toolCallId)!,
-                    action: "placeholder",
-                  })
-                : this.placeholder;
+          const placeholderText =
+            typeof this.placeholder === "function"
+              ? this.placeholder({
+                  toolName: part.toolName,
+                  toolCallId: part.toolCallId,
+                  input: inputs.get(part.toolCallId),
+                  output: originalOutputs.get(part.toolCallId)!,
+                })
+              : this.placeholder;
 
-            part.output = { type: "text", value: placeholderText };
-
-            removedExchanges.push({
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              reason: "tool-result-decay",
-            });
-          }
+          part.output = { type: "text", value: placeholderText };
+          removedExchanges.push({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            reason: "tool-result-decay",
+          });
         }
 
         if (part.type === "tool-call" && this.decayInputs) {
@@ -602,12 +458,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
             continue;
           }
 
-          if (action.type === "truncate") {
-            const serialized = safeStringify(part.input);
-            (part as { input: unknown }).input = { _truncated: serialized.slice(0, action.maxChars) };
-          } else if (action.type === "placeholder") {
-            (part as { input: unknown }).input = { _omitted: true };
-          }
+          (part as { input: unknown }).input = { _omitted: true };
         }
       }
     }
@@ -625,17 +476,14 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         depthFactor,
         forecastToolContextTokens,
         forecastDepthFactor,
-        truncatedMaxTokens: this.truncatedMaxTokens,
-        placeholderFloorTokens: this.placeholderFloorTokens,
-        truncatedCount,
+        maxResultTokens: this.maxResultTokens,
+        placeholderMinSourceTokens: this.placeholderMinSourceTokens,
         placeholderCount,
-        inputTruncatedCount,
         inputPlaceholderCount,
         totalToolExchanges: exchanges.size,
         warningCount: atRiskExchanges.length,
         warningForecastExtraTokens: this.warningForecastExtraTokens,
         warningToolCallIds,
-        warningTruncateIds,
         warningPlaceholderIds,
         pressureAnchors: this.pressureAnchors.map((anchor) => ({ ...anchor })),
       },
@@ -648,7 +496,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     forecastToolContextTokens: number
   ): Promise<void> {
     const lines = [
-      `Context decay notice: If the next step adds about ${this.warningForecastExtraTokens.toLocaleString("en-US")} tool-context tokens (to roughly ${forecastToolContextTokens.toLocaleString("en-US")} total tool-context tokens), the following tool results will be compressed.`,
+      `Context decay notice: If the next step adds about ${this.warningForecastExtraTokens.toLocaleString("en-US")} tool-context tokens (to roughly ${forecastToolContextTokens.toLocaleString("en-US")} total tool-context tokens), the following tool results will be replaced with placeholders.`,
       "Save or restate anything important now.",
     ];
 
@@ -656,30 +504,19 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       const estimatedTokens = Math.ceil(entry.estimatedChars / CHARS_PER_TOKEN);
 
       if (typeof this.placeholder === "function") {
-        const formattedAction = entry.forecastAction.type === "placeholder" ? "placeholder" : "truncate";
         const formatted = this.placeholder({
           toolName: entry.toolName,
           toolCallId: entry.toolCallId,
           input: entry.input,
           output: entry.output,
-          action: formattedAction,
         });
         lines.push(`- ${formatted} (~${estimatedTokens.toLocaleString("en-US")} tokens)`);
         continue;
       }
 
-      if (entry.forecastAction.type === "placeholder") {
-        lines.push(
-          `- ${entry.toolCallId} (${entry.toolName}): ~${estimatedTokens.toLocaleString("en-US")} tokens -> placeholder`
-        );
-        continue;
-      }
-
-      if (entry.forecastAction.type === "truncate") {
-        lines.push(
-          `- ${entry.toolCallId} (${entry.toolName}): ~${estimatedTokens.toLocaleString("en-US")} tokens -> truncated to ~${entry.forecastAction.maxChars.toLocaleString("en-US")} chars`
-        );
-      }
+      lines.push(
+        `- ${entry.toolCallId} (${entry.toolName}): ~${estimatedTokens.toLocaleString("en-US")} tokens -> placeholder`
+      );
     }
 
     await state.emitReminder({
@@ -687,14 +524,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       content: lines.join("\n"),
       attributes: {
         tool_call_ids: atRisk.map((entry) => entry.toolCallId).join(","),
-        truncate_ids: atRisk
-          .filter((entry) => entry.forecastAction.type === "truncate")
-          .map((entry) => entry.toolCallId)
-          .join(","),
-        placeholder_ids: atRisk
-          .filter((entry) => entry.forecastAction.type === "placeholder")
-          .map((entry) => entry.toolCallId)
-          .join(","),
+        placeholder_ids: atRisk.map((entry) => entry.toolCallId).join(","),
         forecast_extra_tool_tokens: String(this.warningForecastExtraTokens),
         forecast_tool_context_tokens: String(forecastToolContextTokens),
       },

@@ -29,8 +29,8 @@ async function main() {
         },
       }),
       new ToolResultDecayStrategy({
-        keepFullResultCount: 0,
-        truncateWindowCount: 0,
+        maxResultTokens: 0,
+        placeholderMinSourceTokens: 0,
         placeholder: "[result omitted]",
       }),
     ],

@@ -35,9 +35,8 @@ async function main() {
       new SystemPromptCachingStrategy(),
       new ToolResultDecayStrategy({
         maxPromptTokens: 120,
-        keepFullResultCount: 1,
-        truncateWindowCount: 1,
-        truncatedMaxTokens: 10,
+        maxResultTokens: 10,
+        placeholderMinSourceTokens: 0,
         placeholder: "[omitted]",
         estimator,
       }),
