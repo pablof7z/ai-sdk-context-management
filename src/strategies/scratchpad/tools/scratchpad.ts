@@ -67,7 +67,7 @@ export function createScratchpadTool(options: {
   consumeForcedCall: () => boolean;
 }) {
   return tool<ScratchpadToolInput, ScratchpadToolResult>({
-    description: "Persist scratchpad state for the current conversation and agent. Every call must include a short description of what the update is doing. Use key/value entries to store current state for this run. Use preserveTurns to keep the first N and last N user/assistant turns from before this scratchpad call while trimming the middle. Preserved turns keep their raw messages, including tool calls and tool results that occurred inside those turns. Use omitToolCallIds to remove completed tool exchanges from visible context.",
+    description: "Persist scratchpad state for the current conversation and agent. Use it to keep working memory compact and the agent's active attention on what still matters for this run. Every call must include a short description of what the update is doing. Use key/value entries to store current state for this run. Use preserveTurns to keep the first N and last N user/assistant turns from before this scratchpad call while trimming the middle. Preserved turns keep their raw messages, including tool calls and tool results that occurred inside those turns. Use omitToolCallIds to remove completed tool exchanges from visible context.",
     inputSchema: jsonSchema({
       type: "object",
       additionalProperties: false,

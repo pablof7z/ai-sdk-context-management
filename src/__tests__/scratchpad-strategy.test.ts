@@ -196,6 +196,7 @@ describe("ScratchpadStrategy", () => {
     const scratchpadTool = strategy.getOptionalTools?.().scratchpad as { description?: string };
 
     expect(scratchpadTool.description).toContain("Persist scratchpad state");
+    expect(scratchpadTool.description).toContain("active attention");
     expect(scratchpadTool.description).toContain("preserveTurns");
     expect(scratchpadTool.description).toContain("omitToolCallIds");
     expect(scratchpadTool.description).toContain("Preserved turns keep their raw messages");
