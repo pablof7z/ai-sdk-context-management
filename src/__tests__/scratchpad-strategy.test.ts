@@ -64,6 +64,20 @@ function assistantToolCall(toolCallId: string, toolName = "search"): Extract<Lan
   };
 }
 
+function assistantToolCalls(
+  ...toolCalls: Array<{ toolCallId: string; toolName: string; input?: Record<string, unknown> }>
+): Extract<LanguageModelV3Message, { role: "assistant" }> {
+  return {
+    role: "assistant",
+    content: toolCalls.map(({ toolCallId, toolName, input }) => ({
+      type: "tool-call" as const,
+      toolCallId,
+      toolName,
+      input: input ?? { q: toolCallId },
+    })),
+  };
+}
+
 function assistantMixed(text: string, toolCallId: string, toolName = "search"): Extract<LanguageModelV3Message, { role: "assistant" }> {
   return {
     role: "assistant",
@@ -371,6 +385,73 @@ describe("ScratchpadStrategy", () => {
       "assistant:ok, 2",
       "assistant:<system-reminder>[scratchpad used: Saved working state]</system-reminder>",
       "user:3",
+      "assistant:ok, 3",
+    ]);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "assistant"
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-3")
+      )
+    ).toBe(true);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "tool"
+        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-3")
+      )
+    ).toBe(true);
+    expect(JSON.stringify(state.prompt)).not.toContain("scratchpad-call-1");
+  });
+
+  test("keeps sibling tool calls adjacent when the active scratchpad call shares an assistant message", async () => {
+    const store = new InMemoryScratchpadStore();
+    await store.set(
+      { conversationId: "conv-1", agentId: "agent-1" },
+      {
+        entries: {
+          notes: "Saved working state",
+        },
+        activeNotice: {
+          description: "Saved working state",
+          toolCallId: "scratchpad-call-1",
+          rawTurnCountAtCall: 2,
+          projectedTurnCountAtCall: 2,
+        },
+        omitToolCallIds: [],
+      }
+    );
+
+    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+    const state = makeState([
+      { role: "system", content: "You are helpful." },
+      user("1"),
+      assistantText("ok, 1"),
+      user("2"),
+      assistantText("ok, 2"),
+      assistantToolCalls(
+        {
+          toolCallId: "scratchpad-call-1",
+          toolName: "scratchpad",
+          input: { description: "Saved working state", setEntries: { notes: "Saved working state" } },
+        },
+        {
+          toolCallId: "call-3",
+          toolName: "fs_read",
+        },
+      ),
+      toolResult("scratchpad-call-1", "scratchpad", "{\"ok\":true}"),
+      toolResult("call-3", "fs_read", "file contents"),
+      assistantText("ok, 3"),
+    ]);
+
+    await strategy.apply(state as never);
+
+    expect(visibleSequence(state.prompt)).toEqual([
+      "system:You are helpful.",
+      "user:1",
+      "assistant:ok, 1",
+      "user:2",
+      "assistant:ok, 2",
+      "assistant:<system-reminder>[scratchpad used: Saved working state]</system-reminder>",
       "assistant:ok, 3",
     ]);
     expect(
@@ -1104,6 +1185,63 @@ describe("ScratchpadStrategy", () => {
         )
       ).toBe(true);
       expect(JSON.stringify(state.prompt)).not.toContain("scratch-1");
+    });
+
+    test("historical mixed assistant tool-call messages keep sibling exchanges intact", async () => {
+      const store = new InMemoryScratchpadStore();
+      await store.set(
+        { conversationId: "conv-1", agentId: "agent-1" },
+        {
+          entries: { notes: "latest state" },
+          activeNotice: {
+            description: "Active save",
+            toolCallId: "scratch-active",
+            rawTurnCountAtCall: 2,
+            projectedTurnCountAtCall: 2,
+          },
+          omitToolCallIds: [],
+        }
+      );
+
+      const strategy = new ScratchpadStrategy({ scratchpadStore: store });
+      const state = makeState([
+        { role: "system", content: "You are helpful." },
+        user("1"),
+        assistantToolCalls(
+          {
+            toolCallId: "scratch-old",
+            toolName: "scratchpad",
+            input: { description: "Old save", setEntries: { notes: "old state" } },
+          },
+          {
+            toolCallId: "fs-call-1",
+            toolName: "fs_read",
+          },
+        ),
+        toolResult("scratch-old", "scratchpad", "{\"ok\":true}"),
+        toolResult("fs-call-1", "fs_read", "file contents"),
+        user("2"),
+        assistantToolCall("scratch-active", "scratchpad"),
+        toolResult("scratch-active", "scratchpad", "{\"ok\":true}"),
+        assistantText("done"),
+      ]);
+
+      await strategy.apply(state as never);
+
+      const oldMixedMessage = state.prompt.find((message) =>
+        message.role === "assistant"
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "fs-call-1")
+      );
+
+      expect(oldMixedMessage).toBeDefined();
+      expect(firstText(oldMixedMessage!)).toBe("<system-reminder>[scratchpad used: Old save]</system-reminder>");
+      expect(
+        state.prompt.some((message) =>
+          message.role === "tool"
+          && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "fs-call-1")
+        )
+      ).toBe(true);
+      expect(JSON.stringify(state.prompt)).not.toContain("scratch-old");
     });
   });
 

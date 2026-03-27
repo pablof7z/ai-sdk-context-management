@@ -433,13 +433,72 @@ export function countProjectedScratchpadTurns(
 
 function replaceScratchpadExchangesWithNotices(
   prompt: LanguageModelV3Prompt,
-  activeToolCallId: string
+  notices: ReadonlyMap<string, string>
 ): LanguageModelV3Prompt {
-  const exchanges = collectToolExchanges(prompt);
+  if (notices.size === 0) {
+    return clonePrompt(prompt);
+  }
 
+  const result: LanguageModelV3Prompt = [];
+
+  for (const message of prompt) {
+    if (message.role === "system" || message.role === "user") {
+      result.push(cloneMessage(message));
+      continue;
+    }
+
+    const filteredContent = message.content.flatMap((part) => {
+      if (isToolCallPart(part) && notices.has(part.toolCallId)) {
+        return [{
+          type: "text" as const,
+          text: buildScratchpadUseNoticeText(notices.get(part.toolCallId)!),
+        }];
+      }
+      if (isToolResultPart(part) && notices.has(part.toolCallId)) {
+        return [];
+      }
+      return [cloneUnknown(part)];
+    });
+
+    if (filteredContent.length === 0) {
+      continue;
+    }
+
+    if (message.role === "assistant") {
+      const clonedMessage = cloneMessage(message) as Extract<LanguageModelV3Message, { role: "assistant" }>;
+      result.push({
+        ...clonedMessage,
+        content: filteredContent as typeof clonedMessage.content,
+      });
+      continue;
+    }
+
+    const clonedMessage = cloneMessage(message) as Extract<LanguageModelV3Message, { role: "tool" }>;
+    result.push({
+      ...clonedMessage,
+      content: filteredContent as typeof clonedMessage.content,
+    });
+  }
+
+  return result;
+}
+
+export function projectScratchpadPrompt(
+  prompt: LanguageModelV3Prompt,
+  options: {
+    preserveTurns?: number | null;
+    notice?: ScratchpadUseNotice;
+  }
+): LanguageModelV3Prompt {
+  if (!options.notice) {
+    return clonePrompt(prompt);
+  }
+
+  const promptExchanges = collectToolExchanges(prompt);
   const scratchpadNotices = new Map<string, string>();
-  for (const exchange of exchanges.values()) {
-    if (exchange.toolName !== "scratchpad" || exchange.toolCallId === activeToolCallId) {
+
+  for (const exchange of promptExchanges.values()) {
+    if (exchange.toolName !== "scratchpad" || exchange.toolCallId === options.notice.toolCallId) {
       continue;
     }
 
@@ -464,91 +523,24 @@ function replaceScratchpadExchangesWithNotices(
     scratchpadNotices.set(exchange.toolCallId, description);
   }
 
-  if (scratchpadNotices.size === 0) {
-    return prompt;
-  }
-
-  const emittedNotices = new Set<string>();
-  const result: LanguageModelV3Prompt = [];
-
-  for (const message of prompt) {
-    if (message.role === "system" || message.role === "user") {
-      result.push(message);
-      continue;
-    }
-
-    const scratchpadCallIds: string[] = [];
-    const filteredContent = message.content.filter((part) => {
-      if (isToolCallPart(part) && scratchpadNotices.has(part.toolCallId)) {
-        scratchpadCallIds.push(part.toolCallId);
-        return false;
-      }
-      if (isToolResultPart(part) && scratchpadNotices.has(part.toolCallId)) {
-        return false;
-      }
-      return true;
-    });
-
-    if (filteredContent.length > 0) {
-      if (filteredContent.length === message.content.length) {
-        result.push(message);
-      } else if (message.role === "assistant") {
-        result.push({
-          ...message,
-          content: filteredContent as typeof message.content,
-        });
-      } else {
-        result.push({
-          ...message,
-          content: filteredContent as typeof message.content,
-        });
-      }
-    }
-
-    for (const toolCallId of scratchpadCallIds) {
-      if (!emittedNotices.has(toolCallId)) {
-        result.push(buildScratchpadUseNoticeMessage(scratchpadNotices.get(toolCallId)!));
-        emittedNotices.add(toolCallId);
-      }
-    }
-  }
-
-  return result;
-}
-
-export function projectScratchpadPrompt(
-  prompt: LanguageModelV3Prompt,
-  options: {
-    preserveTurns?: number | null;
-    notice?: ScratchpadUseNotice;
-  }
-): LanguageModelV3Prompt {
-  if (!options.notice) {
-    return clonePrompt(prompt);
-  }
-
   const promptWithoutNotices = replaceScratchpadExchangesWithNotices(
     removeScratchpadUseNotices(prompt),
-    options.notice.toolCallId
+    scratchpadNotices
   );
   const noticeMessage = buildScratchpadUseNoticeMessage(options.notice.description);
-  const exchanges = collectToolExchanges(promptWithoutNotices);
-  const noticeExchange = exchanges.get(options.notice.toolCallId);
+  const rewrittenExchanges = collectToolExchanges(promptWithoutNotices);
+  const noticeExchange = rewrittenExchanges.get(options.notice.toolCallId);
 
   if (noticeExchange?.callMessageIndex !== undefined) {
-    const exchangeMessageIndices = [
-      noticeExchange.callMessageIndex,
-      ...noticeExchange.resultMessageIndices,
-    ];
-    const afterNoticeIndex = exchangeMessageIndices.length > 0
-      ? Math.max(...exchangeMessageIndices) + 1
-      : noticeExchange.callMessageIndex + 1;
+    const promptWithActiveNotice = replaceScratchpadExchangesWithNotices(
+      promptWithoutNotices,
+      new Map([[options.notice.toolCallId, options.notice.description]])
+    );
     const preNoticePrompt = promptWithoutNotices.slice(0, noticeExchange.callMessageIndex);
-    const postNoticePrompt = promptWithoutNotices.slice(afterNoticeIndex);
+    const postNoticePrompt = promptWithActiveNotice.slice(noticeExchange.callMessageIndex);
 
     return [
       ...compactScratchpadTurns(preNoticePrompt, options.preserveTurns),
-      noticeMessage,
       ...clonePrompt(postNoticePrompt),
     ];
   }
