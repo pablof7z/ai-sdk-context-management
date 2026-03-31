@@ -190,6 +190,16 @@ export interface ContextManagementPreparedRequest {
   reportActualUsage(actualInputTokens: number | null | undefined): Promise<void>;
 }
 
+export interface SharedPrefixObservation {
+  sharedPrefixMessageCount: number;
+  lastSharedMessageIndex?: number;
+  hasSharedPrefix: boolean;
+}
+
+export interface SharedPrefixTracker {
+  observe(prompt: LanguageModelV3Prompt): SharedPrefixObservation;
+}
+
 export interface ContextManagementRuntime {
   prepareRequest(
     options: PrepareContextManagementRequestOptions

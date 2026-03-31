@@ -109,6 +109,14 @@ Per-strategy docs live in [`src/strategies/`](./src/strategies/README.md).
 | `ContextUtilizationReminderStrategy` | Appends a warning block when the prompt gets tight | Gives the agent time to summarize or compact before failure | [docs](./src/strategies/context-utilization-reminder/README.md) | [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) |
 | `ContextWindowStatusStrategy` | Appends a compact token-usage status block to the latest user turn | Gives the agent explicit working-budget and raw-window visibility | [docs](./src/strategies/context-window-status/README.md) | n/a |
 
+## Provider Caching Split
+
+`SystemPromptCachingStrategy` only normalizes the prompt so the stable material is easier to cache.
+
+If a host wants provider-specific prompt caching, it should apply that after its final prompt preparation step. The library now exposes `createSharedPrefixTracker()` so hosts can compare consecutive prepared prompts, find the last identical message in the shared prefix, and then attach provider-specific cache hints at that exact boundary.
+
+That keeps prompt-stability logic reusable while leaving cache policy in the host.
+
 ## Strategy Ordering
 
 Strategies run in array order. A good default is:

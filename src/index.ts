@@ -15,6 +15,7 @@ export { CompactionToolStrategy } from "./strategies/compaction-tool/index.js";
 export { PinnedMessagesStrategy } from "./strategies/pinned-messages/index.js";
 export { normalizeContextBudgetProfile, estimateBudgetProfileTokens } from "./context-budget-profile.js";
 export { createDefaultPromptTokenEstimator, createCalibratingEstimator } from "./token-estimator.js";
+export { createSharedPrefixTracker } from "./prompt-stability-tracker.js";
 export { CONTEXT_MANAGEMENT_KEY } from "./types.js";
 
 export type {
@@ -56,6 +57,8 @@ export type {
   ScratchpadToolInput,
   ScratchpadToolResult,
   ScratchpadUseNotice,
+  SharedPrefixObservation,
+  SharedPrefixTracker,
   SlidingWindowStrategyOptions,
   SummarizationStrategyOptions,
   SystemPromptCachingStrategyOptions,
