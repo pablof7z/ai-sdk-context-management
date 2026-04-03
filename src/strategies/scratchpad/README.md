@@ -2,7 +2,7 @@
 
 If an agent works across many turns, the raw transcript quickly becomes a bad working-memory layer. Important decisions get buried under old tool output, side effects are easy to forget, and the model starts paying for context it no longer needs.
 
-`ScratchpadStrategy` gives the agent an explicit place to keep its current state. The model can rewrite what matters into a compact set of entries, drop stale tool exchanges after capturing the important bits, and see that distilled state injected back into the next turn.
+`ScratchpadStrategy` gives the agent an explicit place to keep its current state. The model can rewrite what matters into a compact set of entries, optionally compact older transcript turns with `preserveTurns`, and see that distilled state injected back into the next turn.
 
 This is the strategy to use when you want the agent to actively manage its own context instead of waiting for the host to summarize or prune it.
 
@@ -10,12 +10,11 @@ This is the strategy to use when you want the agent to actively manage its own c
 
 - keeps long-running coding or research agents from re-reading dead context
 - gives the model a stable place to track decisions, findings, side effects, and next steps
-- makes it safer to remove old tool output once the useful facts have been captured
+- makes it easier to compact older transcript once the useful facts have been captured
 - lets multiple agents in the same conversation share a lightweight working-state view
 
 ## What Changes In The Prompt
 
-- tool exchanges listed in `omitToolCallIds` are removed
 - older transcript context can be compacted with `preserveTurns`, keeping only head/tail user-assistant turns from before the latest scratchpad use
 - a visible assistant notice records the latest scratchpad use in chronological order
 - a reminder block is appended to the latest user message
@@ -25,7 +24,6 @@ This is the strategy to use when you want the agent to actively manage its own c
 
 On each turn, the strategy reads the persisted scratchpad state for the current agent and conversation. It can then:
 
-- hide old tool exchanges the agent previously marked as safe to omit
 - compact the pre-scratchpad history by keeping only the first and last preserved turns
 - keep the raw messages inside those preserved turns, including tool calls and tool results that belong to them
 - inject the agent's current working state back into the prompt as a reminder block
@@ -50,7 +48,6 @@ The optional `scratchpad(...)` tool accepts:
 - `replaceEntries`: replace the entire key/value map
 - `removeEntryKeys`: delete specific keys
 - `preserveTurns`: keep the first `N` and last `N` semantic turns from before this `scratchpad(...)` call while trimming only the middle; the kept turns stay as raw message slices, including tool calls/results inside them
-- `omitToolCallIds`: remove completed tool exchanges after their important parts are captured
 
 Entry names are intentionally open-ended. Agents can use any keys that fit the task, instead of being forced into a fixed schema.
 

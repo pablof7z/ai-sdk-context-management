@@ -125,6 +125,10 @@ function latestUserReminderText(prompt: LanguageModelV3Prompt): string {
     : "";
 }
 
+function userWithScratchpad(text: string, ...scratchpadLines: string[]): string {
+  return `user:${text}\n\nYour scratchpad (Alpha):\n${scratchpadLines.join("\n")}`;
+}
+
 describe("ScratchpadStrategy", () => {
   test("scratchpad tool persists preserveTurns and the active notice for the caller only", async () => {
     const store = new InMemoryScratchpadStore();
@@ -138,7 +142,6 @@ describe("ScratchpadStrategy", () => {
           notes: "Focus on parser cleanup",
         },
         preserveTurns: 2,
-        omitToolCallIds: ["call-1"],
       },
       {
         toolCallId: "tool-call-1",
@@ -172,7 +175,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 2,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: ["call-1"],
       })
     );
     expect(await store.get({ conversationId: "conv-1", agentId: "agent-2" })).toBeUndefined();
@@ -212,13 +214,12 @@ describe("ScratchpadStrategy", () => {
     expect(scratchpadTool.description).toContain("Persist scratchpad state");
     expect(scratchpadTool.description).toContain("active attention");
     expect(scratchpadTool.description).toContain("preserveTurns");
-    expect(scratchpadTool.description).toContain("omitToolCallIds");
     expect(scratchpadTool.description).toContain("Preserved turns keep their raw messages");
     expect(scratchpadTool.description).not.toContain("proactively and often");
     expect(scratchpadTool.description).not.toContain("user requirements");
   });
 
-  test("applies explicit omissions and injects attributed reminders", async () => {
+  test("injects attributed reminders without hiding earlier tool exchanges", async () => {
     const store = new InMemoryScratchpadStore();
     await store.set(
       { conversationId: "conv-1", agentId: "agent-1" },
@@ -233,7 +234,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 2,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: ["call-old", "call-older"],
       }
     );
     await store.set(
@@ -242,7 +242,6 @@ describe("ScratchpadStrategy", () => {
         entries: {
           findings: "I already inspected the CLI wiring.",
         },
-        omitToolCallIds: [],
         agentLabel: "Beta",
       }
     );
@@ -259,13 +258,18 @@ describe("ScratchpadStrategy", () => {
 
     const result = await strategy.apply(state as never);
 
-    expect(state.prompt.some((message) => message.role === "tool")).toBe(false);
     expect(
       state.prompt.some((message) =>
         message.role === "assistant"
-        && message.content.some((part) => part.type === "tool-call" || part.type === "tool-result")
+        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-older")
       )
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      state.prompt.some((message) =>
+        message.role === "tool"
+        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-older")
+      )
+    ).toBe(true);
 
     const reminderText = latestUserReminderText(state.prompt);
     expect(reminderText).toContain("Your scratchpad (Alpha)");
@@ -279,7 +283,6 @@ describe("ScratchpadStrategy", () => {
       reason: "scratchpad-rendered",
       payloads: expect.objectContaining({
         entryCount: 2,
-        appliedOmitCount: 2,
         activeNoticeDescription: "Saving parser state",
       }),
     });
@@ -356,7 +359,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 2,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: [],
       }
     );
 
@@ -384,7 +386,7 @@ describe("ScratchpadStrategy", () => {
       "user:2",
       "assistant:ok, 2",
       "assistant:<system-reminder>[scratchpad used: Saved working state]</system-reminder>",
-      "user:3",
+      userWithScratchpad("3", "notes: Saved working state"),
       "assistant:ok, 3",
     ]);
     expect(
@@ -416,7 +418,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 2,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: [],
       }
     );
 
@@ -449,7 +450,7 @@ describe("ScratchpadStrategy", () => {
       "system:You are helpful.",
       "user:1",
       "assistant:ok, 1",
-      "user:2",
+      userWithScratchpad("2", "notes: Saved working state"),
       "assistant:ok, 2",
       "assistant:<system-reminder>[scratchpad used: Saved working state]</system-reminder>",
       "assistant:ok, 3",
@@ -481,7 +482,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 4,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: [],
       }
     );
 
@@ -511,7 +511,7 @@ describe("ScratchpadStrategy", () => {
       "user:1",
       "assistant:ok, 1",
       "assistant:<system-reminder>[scratchpad used: Compacting around tool work]</system-reminder>",
-      "user:4",
+      userWithScratchpad("4", "(empty)"),
       "assistant:about to inspect 4",
       "assistant:ok, 4",
     ]);
@@ -553,7 +553,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 4,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: [],
       }
     );
 
@@ -580,7 +579,7 @@ describe("ScratchpadStrategy", () => {
       "user:1",
       "assistant:ok, 1",
       "assistant:<system-reminder>[scratchpad used: Compacting earlier work]</system-reminder>",
-      "user:4",
+      userWithScratchpad("4", "(empty)"),
       "assistant:ok, 4",
     ]);
     expect(state.prompt.some((message) => message.role === "tool")).toBe(false);
@@ -604,7 +603,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 4,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: [],
       }
     );
 
@@ -636,7 +634,7 @@ describe("ScratchpadStrategy", () => {
       "assistant:ok, 4",
       "user:5",
       "assistant:ok, 5",
-      "user:6",
+      userWithScratchpad("6", "(empty)"),
       "assistant:ok, 6",
     ]);
   });
@@ -653,7 +651,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 6,
           projectedTurnCountAtCall: 2,
         },
-        omitToolCallIds: [],
       }
     );
 
@@ -678,7 +675,7 @@ describe("ScratchpadStrategy", () => {
       "user:1",
       "assistant:ok, 1",
       "assistant:<system-reminder>[scratchpad used: Fresher scratchpad state]</system-reminder>",
-      "user:6",
+      userWithScratchpad("6", "(empty)"),
       "assistant:ok, 6",
     ]);
     expect(JSON.stringify(state.prompt)).not.toContain("[scratchpad used: stale]");
@@ -696,7 +693,6 @@ describe("ScratchpadStrategy", () => {
           rawTurnCountAtCall: 3,
           projectedTurnCountAtCall: 1,
         },
-        omitToolCallIds: [],
       }
     );
 
@@ -715,43 +711,8 @@ describe("ScratchpadStrategy", () => {
     expect(visibleSequence(state.prompt)).toEqual([
       "system:You are helpful.",
       "assistant:<system-reminder>[scratchpad used: Dropping answered turns]</system-reminder>",
-      "user:3",
+      userWithScratchpad("3", "(empty)"),
     ]);
-  });
-
-  test("pinned tool exchanges are not counted as omitted and remain visible when their turn is preserved", async () => {
-    const store = new InMemoryScratchpadStore();
-    await store.set(
-      { conversationId: "conv-1", agentId: "agent-1" },
-      {
-        activeNotice: {
-          description: "Saving state",
-          toolCallId: "scratchpad-call-1",
-          rawTurnCountAtCall: 2,
-          projectedTurnCountAtCall: 2,
-        },
-        omitToolCallIds: ["call-old"],
-      }
-    );
-
-    const strategy = new ScratchpadStrategy({ scratchpadStore: store });
-    const state = makeState(makePrompt(), ["call-old"]);
-
-    await strategy.apply(state as never);
-
-    expect(state.removedToolExchanges.map((exchange) => exchange.toolCallId)).not.toContain("call-old");
-    expect(
-      state.prompt.some((message) =>
-        message.role === "assistant"
-        && message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-old")
-      )
-    ).toBe(true);
-    expect(
-      state.prompt.some((message) =>
-        message.role === "tool"
-        && message.content.some((part) => part.type === "tool-result" && part.toolCallId === "call-old")
-      )
-    ).toBe(true);
   });
 
   test("forces scratchpad tool choice once the configured threshold is crossed", async () => {
@@ -1020,7 +981,6 @@ describe("ScratchpadStrategy", () => {
             rawTurnCountAtCall: 3,
             projectedTurnCountAtCall: 3,
           },
-          omitToolCallIds: [],
         }
       );
 
@@ -1050,7 +1010,7 @@ describe("ScratchpadStrategy", () => {
         "assistant:<system-reminder>[scratchpad used: Second save]</system-reminder>",
         "user:3",
         "assistant:<system-reminder>[scratchpad used: Third save]</system-reminder>",
-        "user:4",
+        userWithScratchpad("4", "notes: latest state"),
         "assistant:ok, 4",
       ]);
       expect(JSON.stringify(state.prompt)).not.toContain("scratch-1");
@@ -1070,7 +1030,6 @@ describe("ScratchpadStrategy", () => {
             rawTurnCountAtCall: 2,
             projectedTurnCountAtCall: 2,
           },
-          omitToolCallIds: [],
         }
       );
 
@@ -1106,7 +1065,6 @@ describe("ScratchpadStrategy", () => {
             rawTurnCountAtCall: 2,
             projectedTurnCountAtCall: 2,
           },
-          omitToolCallIds: [],
         }
       );
 
@@ -1151,7 +1109,6 @@ describe("ScratchpadStrategy", () => {
             rawTurnCountAtCall: 2,
             projectedTurnCountAtCall: 2,
           },
-          omitToolCallIds: [],
         }
       );
 
@@ -1199,7 +1156,6 @@ describe("ScratchpadStrategy", () => {
             rawTurnCountAtCall: 2,
             projectedTurnCountAtCall: 2,
           },
-          omitToolCallIds: [],
         }
       );
 

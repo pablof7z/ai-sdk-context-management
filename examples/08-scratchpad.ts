@@ -1,5 +1,5 @@
 /**
- * Scratchpad — let the agent maintain structured working state and omit stale tool exchanges
+ * Scratchpad — let the agent maintain structured working state across turns
  */
 import type { ModelMessage } from "ai";
 import type { ScratchpadState, ScratchpadToolInput } from "ai-sdk-context-management";
@@ -20,7 +20,6 @@ async function main() {
       objective: "Finish parser review",
       status: "API review complete, waiting on parser validation.",
     },
-    omitToolCallIds: [],
     agentLabel: "Planner",
   });
 
@@ -53,14 +52,13 @@ async function main() {
     ) => Promise<unknown>;
   }).execute(
     {
-      description: "Capture parser findings and drop stale file reads",
+      description: "Capture parser findings",
       setEntries: {
         finding: "Parser edge case is around trailing commas.",
         nextStep: "Re-check trailing comma handling in parser.ts.",
-        notes: "Reviewer: old shell output is no longer needed.",
+        notes: "Reviewer: keep the parser follow-up visible in scratchpad state.",
       },
       preserveTurns: 1,
-      omitToolCallIds: ["call-old"],
     },
     {
       toolCallId: "scratchpad-demo-call-1",
@@ -100,10 +98,10 @@ async function main() {
   console.log("\nTool result from scratchpad(...):");
   console.log(JSON.stringify(toolResult, null, 2));
   console.log("\nWhat changed:");
-  console.log("- the omitted tool exchange disappeared from the prompt");
   console.log("- the latest user message gained a scratchpad reminder block");
   console.log("- scratchpad entries, including a notes key, were injected into the reminder block");
   console.log("- other agents' scratchpads were injected with attribution");
+  console.log("- the earlier tool exchange is still present unless another strategy compacts it");
   console.log(`\nModel output: ${result.text}`);
 }
 

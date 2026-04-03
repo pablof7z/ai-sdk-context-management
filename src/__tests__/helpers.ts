@@ -11,7 +11,6 @@ function cloneState(state: ScratchpadState): ScratchpadState {
     ...state,
     ...(state.entries ? { entries: { ...state.entries } } : {}),
     ...(state.activeNotice ? { activeNotice: { ...state.activeNotice } } : {}),
-    omitToolCallIds: [...state.omitToolCallIds],
   };
 }
 

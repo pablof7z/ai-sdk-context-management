@@ -12,7 +12,6 @@ import type {
   ScratchpadToolResult,
 } from "../../../types.js";
 import {
-  dedupeStrings,
   mergeEntryMaps,
   normalizeEntryMap,
   normalizePreserveTurns,
@@ -67,7 +66,7 @@ export function createScratchpadTool(options: {
   consumeForcedCall: () => boolean;
 }) {
   return tool<ScratchpadToolInput, ScratchpadToolResult>({
-    description: "Persist scratchpad state for the current conversation and agent. Use it to keep working memory compact and the agent's active attention on what still matters for this run. Every call must include a short description of what the update is doing. Use key/value entries to store current state for this run. Use preserveTurns to keep the first N and last N user/assistant turns from before this scratchpad call while trimming the middle. Preserved turns keep their raw messages, including tool calls and tool results that occurred inside those turns. Use omitToolCallIds to remove completed tool exchanges from visible context.",
+    description: "Persist scratchpad state for the current conversation and agent. Use it to keep working memory compact and the agent's active attention on what still matters for this run. Every call must include a short description of what the update is doing. Use key/value entries to store current state for this run. Use preserveTurns to keep the first N and last N user/assistant turns from before this scratchpad call while trimming the middle. Preserved turns keep their raw messages, including tool calls and tool results that occurred inside those turns.",
     inputSchema: jsonSchema({
       type: "object",
       additionalProperties: false,
@@ -111,13 +110,6 @@ export function createScratchpadTool(options: {
             },
           ],
           description: "Number of turns to keep from both the head and tail of the pre-scratchpad visible transcript. Preserved turns keep their raw messages, including tool calls and tool results inside those turns. Use null to clear.",
-        },
-        omitToolCallIds: {
-          type: "array",
-          items: {
-            type: "string",
-          },
-          description: "Tool call IDs whose request and result should be removed from context. Use for completed tool calls whose results you've already captured in your scratchpad.",
         },
       },
     }),
@@ -174,9 +166,6 @@ export function createScratchpadTool(options: {
           rawTurnCountAtCall,
           projectedTurnCountAtCall,
         },
-        ...(input.omitToolCallIds !== undefined
-          ? { omitToolCallIds: dedupeStrings(input.omitToolCallIds) }
-          : { omitToolCallIds: currentState.omitToolCallIds }),
         updatedAt: Date.now(),
         ...(requestContext.agentLabel
           ? { agentLabel: requestContext.agentLabel }
@@ -186,13 +175,12 @@ export function createScratchpadTool(options: {
       });
 
       if (options.consumeForcedCall()) {
-        const hasPruningParams = input.preserveTurns !== undefined
-          || (input.omitToolCallIds !== undefined && input.omitToolCallIds.length > 0);
+        const hasPruningParams = input.preserveTurns !== undefined;
 
         if (!hasPruningParams) {
           return {
             ok: false,
-            error: "Context is critically full. You MUST free context by setting preserveTurns (integer) to compact older turns, and/or omitToolCallIds (array of tool call IDs) to remove completed tool results. Your scratchpad updates were saved, but you need to call scratchpad again with pruning parameters.",
+            error: "Context is critically full. You MUST free context by setting preserveTurns (integer) to compact older turns. Your scratchpad updates were saved, but you need to call scratchpad again with pruning parameters.",
           };
         }
       }

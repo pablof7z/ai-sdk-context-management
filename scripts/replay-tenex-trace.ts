@@ -58,7 +58,6 @@ class InMemoryScratchpadStore implements ScratchpadStore {
     return {
       ...value,
       ...(value.entries ? { entries: { ...value.entries } } : {}),
-      omitToolCallIds: [...value.omitToolCallIds],
     };
   }
 
@@ -66,7 +65,6 @@ class InMemoryScratchpadStore implements ScratchpadStore {
     this.values.set(this.key(key), {
       ...state,
       ...(state.entries ? { entries: { ...state.entries } } : {}),
-      omitToolCallIds: [...state.omitToolCallIds],
     });
   }
 
@@ -85,7 +83,6 @@ class InMemoryScratchpadStore implements ScratchpadStore {
         state: {
           ...state,
           ...(state.entries ? { entries: { ...state.entries } } : {}),
-          omitToolCallIds: [...state.omitToolCallIds],
         },
       });
     }
@@ -255,7 +252,6 @@ function buildScratchpadStateFromTrace(spans: JaegerSpan[], options: {
     setEntries?: Record<string, string>;
     replaceEntries?: Record<string, string>;
     preserveTurns?: number | null;
-    omitToolCallIds?: string[];
   }>(getTag(latest, "ai.toolCall.args"), "ai.toolCall.args");
 
   const entries = args.replaceEntries ?? args.setEntries;
@@ -273,7 +269,6 @@ function buildScratchpadStateFromTrace(spans: JaegerSpan[], options: {
         },
       }
       : {}),
-    omitToolCallIds: args.omitToolCallIds ?? [],
     agentLabel: options.agentLabel,
   };
 }

@@ -2,7 +2,6 @@ import type { ToolSet } from "ai";
 import {
   getLatestToolActivity,
   projectScratchpadPrompt,
-  removeToolExchanges,
 } from "../../prompt-utils.js";
 import {
   estimateBudgetProfileTokens,
@@ -76,7 +75,6 @@ function buildReminderBlock(options: {
       "CRITICAL: Context is nearly full. You MUST:",
       "1. Update scratchpad entries to match the current state you want preserved",
       "2. Set preserveTurns to compact older turns (e.g. 2-4)",
-      "3. Add completed tool call IDs to omitToolCallIds",
       "Failure to free context will result in an error."
     );
   } else if (
@@ -148,21 +146,6 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
     const allScratchpads = (allScratchpadsRaw ?? []).filter(
       (entry) => entry.agentId !== state.requestContext.agentId
     );
-    let appliedOmitToolCallIds: string[] = [];
-
-    if (currentState.omitToolCallIds.length > 0) {
-      const omitToolCallIds = currentState.omitToolCallIds.filter(
-        (toolCallId) => !state.pinnedToolCallIds.has(toolCallId)
-      );
-      appliedOmitToolCallIds = omitToolCallIds;
-      const omissionResult = removeToolExchanges(
-        state.prompt,
-        omitToolCallIds,
-        "scratchpad"
-      );
-      state.updatePrompt(omissionResult.prompt);
-      state.addRemovedToolExchanges(omissionResult.removedToolExchanges);
-    }
 
     state.updatePrompt(projectScratchpadPrompt(state.prompt, {
       preserveTurns: currentState.preserveTurns,
@@ -225,7 +208,6 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
         activeNoticeToolCallId: currentState.activeNotice?.toolCallId,
         activeNoticeRawTurnCountAtCall: currentState.activeNotice?.rawTurnCountAtCall,
         activeNoticeProjectedTurnCountAtCall: currentState.activeNotice?.projectedTurnCountAtCall,
-        appliedOmitCount: appliedOmitToolCallIds.length,
         otherScratchpadCount: allScratchpads.length,
         estimatedTokens,
         forceToolThresholdRatio: this.forceToolThresholdRatio,

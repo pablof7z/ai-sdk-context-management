@@ -1,21 +1,5 @@
 import type { ScratchpadState } from "../../types.js";
 
-export function dedupeStrings(values: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-
-  for (const value of values) {
-    if (typeof value !== "string" || value.length === 0 || seen.has(value)) {
-      continue;
-    }
-
-    seen.add(value);
-    deduped.push(value);
-  }
-
-  return deduped;
-}
-
 export function normalizePreserveTurns(value: number | null | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
@@ -179,7 +163,6 @@ export function normalizeScratchpadState(
     ...(entries ? { entries } : {}),
     preserveTurns: normalizePreserveTurns(state?.preserveTurns),
     ...(activeNotice ? { activeNotice } : {}),
-    omitToolCallIds: dedupeStrings(state?.omitToolCallIds ?? []),
     ...(typeof state?.updatedAt === "number" ? { updatedAt: state.updatedAt } : {}),
     ...(state?.agentLabel || agentLabel ? { agentLabel: state?.agentLabel ?? agentLabel } : {}),
   };
