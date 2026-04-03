@@ -15,7 +15,7 @@ Every agent eventually runs into the same problem: the next model call cannot se
 ## Installation
 
 ```bash
-npm install ai @ai-sdk/provider ai-sdk-context-management ai-sdk-system-reminders
+npm install ai @ai-sdk/provider ai-sdk-context-management
 ```
 
 ## Quick Start
@@ -71,7 +71,9 @@ That is the core contract:
 - call `runtime.prepareRequest(...)` immediately before the model call
 - merge in `runtime.optionalTools` if you use tool-emitting strategies
 - pass the same request context to `experimental_context` for optional tool execution
-- call `reportActualUsage(...)` with the actual input-token count after the model step completes
+- call `reportActualUsage(...)` with the provider-reported input-token count after the model step completes
+
+`RemindersStrategy({ contextWindowStatus })` uses that reported input-token count on later turns, together with `getContextWindow(...)`, to emit raw model-window status reminders without estimator-based working-budget math.
 
 If you want the full stack version with telemetry, summarization, scratchpad, and reminders, run [`examples/04-composed-strategies.ts`](./examples/04-composed-strategies.ts).
 
@@ -99,49 +101,47 @@ Per-strategy docs live in [`src/strategies/`](./src/strategies/README.md).
 
 | Strategy | What changes in the prompt | What the agent gets | Docs | Runnable example |
 | --- | --- | --- | --- | --- |
-| `SystemPromptCachingStrategy` | Moves system messages into a stable prefix and can consolidate them | Better cache reuse and less prompt churn | [docs](./src/strategies/system-prompt-caching/README.md) | [06-system-prompt-caching.ts](./examples/06-system-prompt-caching.ts) |
+| `RemindersStrategy` | Owns reminder production, delta tracking, and placement into overlay messages, fallback system blocks, or latest-user appends | One reminder pipeline for host facts, built-in warnings, and provider-aware delivery, including raw context-window status from provider-reported usage | [docs](./src/strategies/reminders/README.md) | [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) |
+| `AnthropicPromptCachingStrategy` | Adds Anthropic cache hints after final prompt assembly | Provider-specific cache breakpointing for naturally stable prompt prefixes | [docs](./src/strategies/anthropic-prompt-caching/README.md) | [06-anthropic-prompt-caching.ts](./examples/06-anthropic-prompt-caching.ts) |
 | `SlidingWindowStrategy` | Keeps the recent tail, can optionally preserve a head, and drops older non-system turns | Bounded context with simple recency bias or setup preservation | [docs](./src/strategies/sliding-window/README.md) | [01-sliding-window.ts](./examples/01-sliding-window.ts) |
 | `ToolResultDecayStrategy` | Leaves recent tool results raw, then replaces older oversized results with placeholders based on depth and total tool-context pressure | Keeps the reasoning chain while continuously hiding stale heavy payloads without waiting for a prompt-budget cliff | [docs](./src/strategies/tool-result-decay/README.md) | [02-tool-result-decay.ts](./examples/02-tool-result-decay.ts) |
 | `SummarizationStrategy` | Replaces older turns with a tagged summary block using either `summarize(...)` or `model` | Older facts survive in compressed form without replaying the whole middle | [docs](./src/strategies/summarization/README.md) | [03-summarization.ts](./examples/03-summarization.ts), [07-model-backed-summarization.ts](./examples/07-model-backed-summarization.ts) |
-| `ScratchpadStrategy` | Injects persisted scratchpad state and can remove stale tool exchanges | Structured working state, note edits, and selective forgetting | [docs](./src/strategies/scratchpad/README.md) | [08-scratchpad.ts](./examples/08-scratchpad.ts) |
+| `ScratchpadStrategy` | Injects persisted scratchpad state and can compact older transcript around scratchpad checkpoints | Structured working state, note edits, and agent-driven transcript compaction | [docs](./src/strategies/scratchpad/README.md) | [08-scratchpad.ts](./examples/08-scratchpad.ts) |
 | `PinnedMessagesStrategy` | Marks specific tool call IDs as protected before pruning | Lets the agent keep the evidence it considers critical | [docs](./src/strategies/pinned-messages/README.md) | [09-pinned-messages.ts](./examples/09-pinned-messages.ts) |
-| `CompactionToolStrategy` | Compacts old history only after the agent asks for it | Agent-controlled compression at task boundaries | [docs](./src/strategies/compaction-tool/README.md) | [10-compaction-tool.ts](./examples/10-compaction-tool.ts) |
-| `ContextUtilizationReminderStrategy` | Appends a warning block when the prompt gets tight | Gives the agent time to summarize or compact before failure | [docs](./src/strategies/context-utilization-reminder/README.md) | [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) |
-| `ContextWindowStatusStrategy` | Appends a compact token-usage status block to the latest user turn | Gives the agent explicit working-budget and raw-window visibility | [docs](./src/strategies/context-window-status/README.md) | n/a |
+| `CompactionToolStrategy` | Replaces selected stale `user`/`assistant` history with anchored continuation summaries, either when the agent calls `compact_context(...)` or when the host auto-compacts | Agent-controlled and host-controlled semantic compaction with persistent overlays | [docs](./src/strategies/compaction-tool/README.md) | [10-compaction-tool.ts](./examples/10-compaction-tool.ts) |
 
 ## Provider Caching Split
 
-`SystemPromptCachingStrategy` only normalizes the prompt so the stable material is easier to cache.
+`RemindersStrategy` decides reminder content and placement. `AnthropicPromptCachingStrategy` runs after that final prompt assembly and only adds provider-specific cache metadata.
 
-If a host wants provider-specific prompt caching, it should apply that after its final prompt preparation step. The library now exposes `createSharedPrefixTracker()` so hosts can compare consecutive prepared prompts, find the last identical message in the shared prefix, and then attach provider-specific cache hints at that exact boundary.
-
-That keeps prompt-stability logic reusable while leaving cache policy in the host.
+This split matters for Anthropic prompt caching: cache breakpoints should follow naturally stable leading prompt content. If the system prompt or earlier conversation history changes, the shared-prefix cache is invalidated.
 
 ## Strategy Ordering
 
 Strategies run in array order. A good default is:
 
-1. `SystemPromptCachingStrategy`
-2. `PinnedMessagesStrategy`
-3. pruning and compression strategies
-4. agent-directed context tools
-5. reminder strategies
+1. `PinnedMessagesStrategy`
+2. pruning and compression strategies
+3. agent-directed context tools
+4. `RemindersStrategy`
+5. `AnthropicPromptCachingStrategy` when the provider is Anthropic
 
 In practice that usually means:
 
-1. `SystemPromptCachingStrategy`
-2. `PinnedMessagesStrategy`
-3. `SlidingWindowStrategy` (optionally with `headCount`), `ToolResultDecayStrategy`, or `SummarizationStrategy`
-4. `ScratchpadStrategy` or `CompactionToolStrategy`
-5. `ContextUtilizationReminderStrategy`
+1. `PinnedMessagesStrategy`
+2. `SlidingWindowStrategy` (optionally with `headCount`), `ToolResultDecayStrategy`, or `SummarizationStrategy`
+3. `ScratchpadStrategy` or `CompactionToolStrategy`
+4. `RemindersStrategy`
+5. `AnthropicPromptCachingStrategy`
 
 ## Choosing A Stack
 
 - Short, bounded conversations: `SlidingWindowStrategy`
 - Preserve setup plus the latest turns: `SlidingWindowStrategy({ headCount, keepLastMessages })`
-- Tool-heavy agents: `SystemPromptCachingStrategy` + `ToolResultDecayStrategy`
-- Long-running agents: `SystemPromptCachingStrategy` + `PinnedMessagesStrategy` + `ToolResultDecayStrategy` + `SummarizationStrategy({ model })`
-- Agents that self-manage context: `SystemPromptCachingStrategy` + `PinnedMessagesStrategy` + `ScratchpadStrategy` + `CompactionToolStrategy`
+- Tool-heavy agents: `ToolResultDecayStrategy` + `RemindersStrategy`
+- Long-running agents: `PinnedMessagesStrategy` + `ToolResultDecayStrategy` + `SummarizationStrategy({ model })` + `RemindersStrategy`
+- Anthropic-heavy agents with naturally stable leading context: `AnthropicPromptCachingStrategy` after your normal prompt-shaping strategies
+- Agents that self-manage context: `PinnedMessagesStrategy` + `ScratchpadStrategy` + `CompactionToolStrategy` + `RemindersStrategy`
 - Full graduated stack: run [`examples/04-composed-strategies.ts`](./examples/04-composed-strategies.ts)
 
 ## Tool Result Decay
@@ -172,7 +172,7 @@ new ToolResultDecayStrategy({
 });
 ```
 
-Warnings are emitted through the runtime reminder path, either into `systemReminderContext` or inline in the prompt, with machine-readable attributes:
+Warnings are emitted through `RemindersStrategy`, which can place them into overlay messages, fallback system blocks, or latest-user appends depending on policy:
 
 - `tool_call_ids`
 - `placeholder_ids`
@@ -190,18 +190,18 @@ All examples are local and deterministic. They use mock models, print the transf
 | [03-summarization.ts](./examples/03-summarization.ts) | `cd examples && npx tsx 03-summarization.ts` | A tagged summary system message replaces older turns |
 | [04-composed-strategies.ts](./examples/04-composed-strategies.ts) | `cd examples && npx tsx 04-composed-strategies.ts` | Multiple strategies stack cleanly and telemetry shows what ran |
 | [05-sliding-window-head.ts](./examples/05-sliding-window-head.ts) | `cd examples && npx tsx 05-sliding-window-head.ts` | Setup context and the latest blocker remain, but the middle drops out |
-| [06-system-prompt-caching.ts](./examples/06-system-prompt-caching.ts) | `cd examples && npx tsx 06-system-prompt-caching.ts` | System instructions consolidate into a stable prefix |
+| [06-anthropic-prompt-caching.ts](./examples/06-anthropic-prompt-caching.ts) | `cd examples && npx tsx 06-anthropic-prompt-caching.ts` | Naturally stable leading prompt history gets the Anthropic cache breakpoint |
 | [07-model-backed-summarization.ts](./examples/07-model-backed-summarization.ts) | `cd examples && npx tsx 07-model-backed-summarization.ts` | A model-generated summary replaces older discussion |
 | [08-scratchpad.ts](./examples/08-scratchpad.ts) | `cd examples && npx tsx 08-scratchpad.ts` | `scratchpad(...)` changes what the next turn sees |
 | [09-pinned-messages.ts](./examples/09-pinned-messages.ts) | `cd examples && npx tsx 09-pinned-messages.ts` | One pinned tool result survives while other old ones decay |
-| [10-compaction-tool.ts](./examples/10-compaction-tool.ts) | `cd examples && npx tsx 10-compaction-tool.ts` | `compact_context(...)` compacts now and reuses the stored summary later |
-| [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) | `cd examples && npx tsx 11-context-utilization-reminder.ts` | The latest user message gains a warning before hard pruning starts |
+| [10-compaction-tool.ts](./examples/10-compaction-tool.ts) | `cd examples && npx tsx 10-compaction-tool.ts` | `compact_context({ message, from?, to? })` compacts now and reapplies the stored compaction later |
+| [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) | `cd examples && npx tsx 11-context-utilization-reminder.ts` | `RemindersStrategy` adds a warning before hard pruning starts |
 
 See [`examples/README.md`](./examples/README.md) for the full example index.
 
 ## Runtime API
 
-### `createContextManagementRuntime({ strategies, telemetry, estimator, systemReminderContext })`
+### `createContextManagementRuntime({ strategies, telemetry, estimator })`
 
 Returns:
 
@@ -213,11 +213,10 @@ Returns:
 - `messages`
 - `providerOptions`
 - `toolChoice`
+- `runtimeOverlays`
 - `reportActualUsage(actualInputTokens)`
 
 The runtime merges tools from all strategies and throws on tool-name collisions.
-
-If `systemReminderContext` is provided, reminders are routed through `ai-sdk-system-reminders`. Otherwise, reminders are appended inline to the prompt.
 
 ## Scratchpad API
 
@@ -230,7 +229,6 @@ The tool supports:
 - `replaceEntries`: replace all key/value entries
 - `removeEntryKeys`: delete specific entries by key
 - `preserveTurns`: keep the first `N` and last `N` user/assistant turns from before this `scratchpad(...)` call, trimming only the middle while preserving the raw messages inside those kept turns
-- `omitToolCallIds`: remove completed tool exchanges after the important parts have been captured
 
 Entry names are intentionally unconstrained.
 

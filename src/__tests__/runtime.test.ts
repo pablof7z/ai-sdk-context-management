@@ -1,6 +1,6 @@
 import type { ContextManagementTelemetryEvent } from "../index.js";
 import {
-  ContextUtilizationReminderStrategy,
+  RemindersStrategy,
   ScratchpadStrategy,
   SlidingWindowStrategy,
   createContextManagementRuntime,
@@ -166,16 +166,18 @@ describe("createContextManagementRuntime", () => {
     const events: ContextManagementTelemetryEvent[] = [];
     const runtime = createContextManagementRuntime({
       strategies: [
-        new ContextUtilizationReminderStrategy({
-          budgetProfile: {
-            tokenBudget: 100,
-            estimator: {
-              estimateMessage: () => 10,
-              estimatePrompt: () => 100,
-              estimateTools: () => 0,
+        new RemindersStrategy({
+          contextUtilization: {
+            budgetProfile: {
+              tokenBudget: 100,
+              estimator: {
+                estimateMessage: () => 10,
+                estimatePrompt: () => 100,
+                estimateTools: () => 0,
+              },
             },
+            warningThresholdRatio: 0.7,
           },
-          warningThresholdRatio: 0.7,
         }),
       ],
       telemetry: async (event) => {

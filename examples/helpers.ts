@@ -49,6 +49,7 @@ export async function prepareDemoRequest(options: {
   capturedPrompts?: LanguageModelV3Prompt[];
   tools?: ToolSet;
   toolChoice?: ToolChoice<ToolSet>;
+  reminderData?: unknown;
   model?: {
     provider: string;
     modelId: string;
@@ -59,6 +60,7 @@ export async function prepareDemoRequest(options: {
     messages: options.messages,
     tools: options.tools ?? options.runtime.optionalTools,
     toolChoice: options.toolChoice,
+    reminderData: options.reminderData,
     model: options.model ?? {
       provider: "demo",
       modelId: "demo",
@@ -75,6 +77,7 @@ export async function runPreparedDemo(options: {
   responseText: string;
   tools?: ToolSet;
   toolChoice?: ToolChoice<ToolSet>;
+  reminderData?: unknown;
   model?: {
     provider: string;
     modelId: string;
@@ -91,6 +94,7 @@ export async function runPreparedDemo(options: {
     capturedPrompts,
     tools: options.tools,
     toolChoice: options.toolChoice,
+    reminderData: options.reminderData,
     model: options.model,
   });
 

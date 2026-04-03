@@ -1,10 +1,10 @@
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
 import type { ModelMessage, ToolSet } from "ai";
-import { createSystemReminderSink } from "ai-sdk-system-reminders";
-import { appendReminderToLatestUserMessage, clonePrompt } from "./prompt-utils.js";
+import { clonePrompt } from "./prompt-utils.js";
 import { createCalibratingEstimator, createDefaultPromptTokenEstimator } from "./token-estimator.js";
 import { CONTEXT_MANAGEMENT_KEY } from "./types.js";
 import type {
+  ContextManagementReminder,
   ContextManagementPreparedRequest,
   ContextManagementStrategyPayload,
   ContextManagementModelRef,
@@ -18,6 +18,7 @@ import type {
   CreateContextManagementRuntimeOptions,
   PrepareContextManagementRequestOptions,
   PromptTokenEstimator,
+  ReminderRuntimeOverlay,
   RemovedToolExchange,
 } from "./types.js";
 
@@ -25,17 +26,26 @@ class StrategyState implements ContextManagementStrategyState {
   private currentParams: ContextManagementRequestParams;
   private readonly removedByToolCallId = new Map<string, RemovedToolExchange>();
   private readonly pinned = new Set<string>();
+  private readonly queuedReminders: ContextManagementReminder[] = [];
+  private readonly runtimeOverlays: ReminderRuntimeOverlay[] = [];
 
   constructor(
     params: ContextManagementRequestParams,
     public readonly requestContext: ContextManagementRequestContext,
     public readonly model?: ContextManagementModelRef,
-    private readonly systemReminderSink?: ReturnType<typeof createSystemReminderSink>
-  ) {
+    public readonly lastReportedModelInputTokens?: number
+    ) {
     this.currentParams = {
       ...params,
       prompt: clonePrompt(params.prompt),
     };
+    if (params.queuedReminders) {
+      this.queuedReminders.push(
+        ...params.queuedReminders.map((reminder) =>
+          normalizeReminder(reminder, "transient")
+        )
+      );
+    }
   }
 
   get params(): ContextManagementRequestParams {
@@ -46,12 +56,20 @@ class StrategyState implements ContextManagementStrategyState {
     return this.currentParams.prompt;
   }
 
+  get reminderData() {
+    return this.currentParams.reminderData;
+  }
+
   get removedToolExchanges(): readonly RemovedToolExchange[] {
     return Array.from(this.removedByToolCallId.values());
   }
 
   get pinnedToolCallIds(): ReadonlySet<string> {
     return this.pinned;
+  }
+
+  get preparedRuntimeOverlays(): readonly ReminderRuntimeOverlay[] {
+    return this.runtimeOverlays;
   }
 
   updatePrompt(prompt: ContextManagementRequestParams["prompt"]): void {
@@ -81,14 +99,30 @@ class StrategyState implements ContextManagementStrategyState {
     }
   }
 
-  async emitReminder(reminder: import("ai-sdk-system-reminders").SystemReminderEmission): Promise<void> {
-    if (this.systemReminderSink) {
-      await this.systemReminderSink.emit(reminder, this.requestContext);
-      return;
-    }
-
-    this.updatePrompt(appendReminderToLatestUserMessage(this.prompt, reminder.content));
+  addRuntimeOverlay(overlay: ReminderRuntimeOverlay): void {
+    this.runtimeOverlays.push(cloneUnknown(overlay));
   }
+
+  consumeReminderQueue(): ContextManagementReminder[] {
+    const queued = this.queuedReminders.map((reminder) => cloneUnknown(reminder));
+    this.queuedReminders.length = 0;
+    return queued;
+  }
+
+  async emitReminder(reminder: ContextManagementReminder): Promise<void> {
+    this.queuedReminders.push(normalizeReminder(reminder, "stateful"));
+  }
+}
+
+function normalizeReminder(
+  reminder: ContextManagementReminder,
+  defaultDeliveryMode: ContextManagementReminder["deliveryMode"]
+): ContextManagementReminder {
+  const cloned = cloneUnknown(reminder);
+  return {
+    ...cloned,
+    deliveryMode: cloned.deliveryMode ?? defaultDeliveryMode,
+  };
 }
 
 function cloneUnknown<T>(value: T): T {
@@ -109,6 +143,10 @@ function cloneUnknown<T>(value: T): T {
 
 function countMessages(prompt: ContextManagementRequestParams["prompt"]): number {
   return prompt.length;
+}
+
+function usageStoreKey(requestContext: ContextManagementRequestContext): string {
+  return `${requestContext.conversationId}:${requestContext.agentId}`;
 }
 
 function normalizeStrategyPayload(
@@ -283,11 +321,17 @@ function createActualUsageReporter(options: {
   requestContext: ContextManagementRequestContext;
   prompt: LanguageModelV3Prompt;
   tools: ToolSet | undefined;
+  usageByRequestContext: Map<string, number>;
 }): ContextManagementPreparedRequest["reportActualUsage"] {
   return async (actualInputTokens) => {
     if (actualInputTokens == null || actualInputTokens <= 0) {
       return;
     }
+
+    options.usageByRequestContext.set(
+      usageStoreKey(options.requestContext),
+      actualInputTokens
+    );
 
     const rawEstimate =
       options.baseEstimator.estimatePrompt(options.prompt) +
@@ -321,9 +365,7 @@ export function createContextManagementRuntime(
   const estimator = calibratingEstimator;
   const { tools, toolOwners } = mergeOptionalTools(strategies);
   const optionalTools = wrapOptionalTools(tools, toolOwners, options.telemetry);
-  const systemReminderSink = options.systemReminderContext
-    ? createSystemReminderSink(options.systemReminderContext)
-    : undefined;
+  const usageByRequestContext = new Map<string, number>();
 
   return {
     async prepareRequest({
@@ -333,6 +375,8 @@ export function createContextManagementRuntime(
       toolChoice,
       providerOptions,
       model,
+      reminderData,
+      queuedReminders,
     }: PrepareContextManagementRequestOptions): Promise<ContextManagementPreparedRequest> {
       const state = new StrategyState(
         {
@@ -340,10 +384,12 @@ export function createContextManagementRuntime(
           tools: requestTools,
           toolChoice,
           providerOptions: cloneUnknown(providerOptions),
+          reminderData: cloneUnknown(reminderData),
+          queuedReminders: queuedReminders?.map((reminder) => cloneUnknown(reminder)),
         },
         requestContext,
         model,
-        systemReminderSink
+        usageByRequestContext.get(usageStoreKey(requestContext))
       );
       const estimate = (prompt: LanguageModelV3Prompt, tools: ToolSet | undefined) =>
         estimator.estimatePrompt(prompt) + (estimator.estimateTools?.(tools) ?? 0);
@@ -420,6 +466,11 @@ export function createContextManagementRuntime(
         messages: clonePrompt(state.prompt) as ModelMessage[],
         providerOptions: cloneUnknown(state.params.providerOptions),
         toolChoice: cloneUnknown(state.params.toolChoice),
+        ...(state.preparedRuntimeOverlays.length > 0
+          ? {
+            runtimeOverlays: state.preparedRuntimeOverlays.map((overlay) => cloneUnknown(overlay)),
+          }
+          : {}),
         reportActualUsage: createActualUsageReporter({
           baseEstimator,
           calibratingEstimator,
@@ -427,6 +478,7 @@ export function createContextManagementRuntime(
           requestContext,
           prompt: clonePrompt(state.prompt),
           tools: state.params.tools,
+          usageByRequestContext,
         }),
       };
     },

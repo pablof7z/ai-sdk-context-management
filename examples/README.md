@@ -37,17 +37,17 @@ npx tsx 01-sliding-window.ts
 ### `04-composed-strategies.ts`
 
 - shows a graduated stack with telemetry
-- look for multiple effects in one prompt: normalized system prefix, compressed tool results, summary, scratchpad reminder, and utilization warning
+- look for multiple effects in one prompt: compressed tool results, summary, scratchpad reminder, and utilization warning
 
 ### `05-sliding-window-head.ts`
 
 - shows setup context plus recent context staying in view
 - look for the middle status updates disappearing
 
-### `06-system-prompt-caching.ts`
+### `06-anthropic-prompt-caching.ts`
 
-- shows plain system prompts consolidating into one stable prefix
-- look for non-system message order staying unchanged
+- shows provider-specific Anthropic cache hints landing on a naturally stable prompt prefix
+- look for the unchanged leading history getting the breakpoint while the changing user turn stays outside it
 
 ### `07-model-backed-summarization.ts`
 
@@ -57,7 +57,7 @@ npx tsx 01-sliding-window.ts
 ### `08-scratchpad.ts`
 
 - shows the `scratchpad(...)` tool affecting future turns
-- look for omitted tool exchanges disappearing and structured scratchpad state being injected into the latest user message
+- look for structured scratchpad state being injected into the latest user message
 
 ### `09-pinned-messages.ts`
 
@@ -66,10 +66,10 @@ npx tsx 01-sliding-window.ts
 
 ### `10-compaction-tool.ts`
 
-- shows `compact_context(...)` triggering compaction on the next call
-- look for the stored summary being injected again on the following turn
+- shows `compact_context({ message, from?, to? })` queuing an anchored compaction for the next call
+- look for the stored compaction being re-applied again on the following turn
 
 ### `11-context-utilization-reminder.ts`
 
-- shows a warning block appearing before hard pruning starts
+- shows `RemindersStrategy` emitting a warning block before hard pruning starts
 - look for the latest user message gaining a utilization reminder

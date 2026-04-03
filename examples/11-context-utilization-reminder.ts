@@ -4,7 +4,7 @@
 import type { ModelMessage } from "ai";
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
 import {
-  ContextUtilizationReminderStrategy,
+  RemindersStrategy,
   createContextManagementRuntime,
   createDefaultPromptTokenEstimator,
 } from "ai-sdk-context-management";
@@ -28,13 +28,15 @@ async function main() {
   const estimator = createDefaultPromptTokenEstimator();
   const runtime = createContextManagementRuntime({
     strategies: [
-      new ContextUtilizationReminderStrategy({
-        budgetProfile: {
-          tokenBudget: 40,
-          estimator,
+      new RemindersStrategy({
+        contextUtilization: {
+          budgetProfile: {
+            tokenBudget: 40,
+            estimator,
+          },
+          warningThresholdRatio: 0.5,
+          mode: "generic",
         },
-        warningThresholdRatio: 0.5,
-        mode: "generic",
       }),
     ],
   });
@@ -54,7 +56,7 @@ async function main() {
     responseText: "I should summarize stale context before continuing.",
   });
 
-  printPrompt("Prompt after ContextUtilizationReminderStrategy", capturedPrompts[0]);
+  printPrompt("Prompt after RemindersStrategy", capturedPrompts[0]);
   console.log("\nLatest user message after reminder injection:");
   console.log(getUserText(capturedPrompts[0][capturedPrompts[0].length - 1]));
   console.log("\nWhat changed:");

@@ -2,7 +2,7 @@ import { simulateReadableStream, stepCountIs, streamText } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import {
   CONTEXT_MANAGEMENT_KEY,
-  ContextUtilizationReminderStrategy,
+  RemindersStrategy,
   SummarizationStrategy,
   ToolResultDecayStrategy,
   createContextManagementRuntime,
@@ -41,13 +41,15 @@ describe("context management runtime integration", () => {
         new ScratchpadStrategy({
           scratchpadStore: store,
         }),
-        new ContextUtilizationReminderStrategy({
-          budgetProfile: {
-            tokenBudget: 100,
-            estimator,
+        new RemindersStrategy({
+          contextUtilization: {
+            budgetProfile: {
+              tokenBudget: 100,
+              estimator,
+            },
+            warningThresholdRatio: 0.7,
+            mode: "scratchpad",
           },
-          warningThresholdRatio: 0.7,
-          mode: "scratchpad",
         }),
       ],
       telemetry: async (event) => {
@@ -74,7 +76,6 @@ describe("context management runtime integration", () => {
                     setEntries: {
                       notes: "Track parser follow-up",
                     },
-                    omitToolCallIds: ["call-old"],
                   }),
                 },
                 {
@@ -186,7 +187,6 @@ describe("context management runtime integration", () => {
         entries: {
           notes: "Track parser follow-up",
         },
-        omitToolCallIds: ["call-old"],
       })
     );
     expect(baseModel.doStreamCalls).toHaveLength(2);
@@ -197,13 +197,13 @@ describe("context management runtime integration", () => {
           (part.type === "tool-call" || part.type === "tool-result") && part.toolCallId === "call-old"
         )
       )
-    ).toBe(false);
+    ).toBe(true);
     expect(JSON.stringify(secondPrompt)).toContain("Track parser follow-up");
     expect(JSON.stringify(secondPrompt)).toContain("scratchpad(...) is available for context compaction");
     expect(events.some((event) =>
       event.type === "strategy-complete" &&
-      event.strategyName === "context-utilization-reminder" &&
-      event.reason === "warning-injected"
+      event.strategyName === "reminders" &&
+      event.reason === "reminders-applied"
     )).toBe(true);
   });
 });

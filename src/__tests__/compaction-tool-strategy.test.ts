@@ -1,16 +1,49 @@
-import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
+import type { LanguageModelV3Message, LanguageModelV3Prompt } from "@ai-sdk/provider";
 import { CompactionToolStrategy } from "../index.js";
 import type {
+  CompactionState,
   CompactionStore,
   CompactionStoreKey,
   ContextManagementStrategyState,
   RemovedToolExchange,
 } from "../types.js";
-import { makePrompt } from "./helpers.js";
+
+function makeAddressablePrompt(): LanguageModelV3Prompt {
+  const prompt: LanguageModelV3Prompt = [
+    { role: "system", content: "You are helpful." },
+    { role: "user", content: [{ type: "text", text: "Investigate parser issue" }] },
+    { role: "assistant", content: [{ type: "text", text: "I opened the parser files." }] },
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-old", toolName: "fs_read", input: { path: "parser.ts" } }],
+    },
+    {
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: "call-old", toolName: "fs_read", output: { type: "text", value: "parser contents" } }],
+    },
+    { role: "user", content: [{ type: "text", text: "The tokenizer still fails on comments." }] },
+    { role: "assistant", content: [{ type: "text", text: "I traced it to the old comment branch." }] },
+    { role: "user", content: [{ type: "text", text: "Please continue with the fix." }] },
+  ];
+
+  return prompt.map((message, index) => message.role === "system"
+    ? { ...message, id: `system:${index}` }
+    : {
+      ...message,
+      id: `message:${index}`,
+      sourceRecordId: `record:${index}`,
+      eventId: `event:${index}`,
+    } as LanguageModelV3Message
+  );
+}
 
 function makeState(
   prompt: LanguageModelV3Prompt,
-  requestContext: { conversationId: string; agentId: string } = { conversationId: "conv-1", agentId: "agent-1" },
+  requestContext: { conversationId: string; agentId: string; agentLabel?: string } = {
+    conversationId: "conv-1",
+    agentId: "agent-1",
+    agentLabel: "executor",
+  },
   pinnedIds: string[] = []
 ) {
   const pinnedToolCallIds = new Set(pinnedIds);
@@ -38,251 +71,284 @@ function makeState(
         pinnedToolCallIds.add(id);
       }
     },
+    emitReminder: async () => {},
+  };
+}
+
+function cloneState(state: CompactionState): CompactionState {
+  return {
+    ...state,
+    edits: state.edits.map((edit) => ({
+      ...edit,
+      start: { ...edit.start },
+      end: { ...edit.end },
+    })),
   };
 }
 
 class InMemoryCompactionStore implements CompactionStore {
-  private readonly values = new Map<string, string>();
+  private readonly values = new Map<string, CompactionState>();
 
   private key(key: CompactionStoreKey): string {
     return `${key.conversationId}:${key.agentId}`;
   }
 
-  async get(key: CompactionStoreKey): Promise<string | undefined> {
-    return this.values.get(this.key(key));
+  async get(key: CompactionStoreKey): Promise<CompactionState | undefined> {
+    const value = this.values.get(this.key(key));
+    return value ? cloneState(value) : undefined;
   }
 
-  async set(key: CompactionStoreKey, summary: string): Promise<void> {
-    this.values.set(this.key(key), summary);
+  async set(key: CompactionStoreKey, state: CompactionState): Promise<void> {
+    this.values.set(this.key(key), cloneState(state));
   }
 }
 
 describe("CompactionToolStrategy", () => {
   test("returns compact_context in optional tools", () => {
-    const strategy = new CompactionToolStrategy({
-      summarize: async () => "summary",
-    });
+    const strategy = new CompactionToolStrategy({});
 
     const tools = strategy.getOptionalTools();
     expect(tools).toHaveProperty("compact_context");
-    expect(tools.compact_context).toBeDefined();
   });
 
-  test("no-op on apply when no compaction pending and no stored summary", async () => {
-    const strategy = new CompactionToolStrategy({
-      summarize: async () => "summary",
-    });
-
-    const prompt = makePrompt();
-    const state = makeState(prompt);
-    const originalLength = state.prompt.length;
-
-    await strategy.apply(state as unknown as ContextManagementStrategyState);
-
-    expect(state.prompt.length).toBe(originalLength);
-    expect(state.removedToolExchanges).toEqual([]);
-  });
-
-  test("injects stored summary as system message on apply", async () => {
-    const store = new InMemoryCompactionStore();
-    await store.set({ conversationId: "conv-1", agentId: "agent-1" }, "Previous conversation summary.");
-
-    const strategy = new CompactionToolStrategy({
-      summarize: async () => "summary",
-      compactionStore: store,
-    });
-
-    const prompt = makePrompt();
-    const state = makeState(prompt);
-
-    await strategy.apply(state as unknown as ContextManagementStrategyState);
-
-    const summaryMessage = state.prompt.find(
-      (m) =>
-        m.role === "system" &&
-        (m.providerOptions as Record<string, unknown>)?.contextManagement &&
-        ((m.providerOptions as Record<string, Record<string, unknown>>).contextManagement).type === "compaction-summary"
-    );
-    expect(summaryMessage).toBeDefined();
-    expect((summaryMessage as { content: string }).content).toBe("Previous conversation summary.");
-  });
-
-  test("after tool is called, next apply triggers summarization", async () => {
-    let summarizeCalled = false;
-    const strategy = new CompactionToolStrategy({
-      summarize: async (messages) => {
-        summarizeCalled = true;
-        return `Summarized ${messages.length} messages`;
-      },
-      keepLastMessages: 2,
-    });
-
-    const compactTool = strategy.getOptionalTools().compact_context;
-    await compactTool.execute?.(
-      {},
-      {
-        toolCallId: "tool-call-1",
-        messages: [],
-        experimental_context: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      }
-    );
-
-    const prompt = makePrompt();
-    const state = makeState(prompt);
-
-    await strategy.apply(state as unknown as ContextManagementStrategyState);
-
-    expect(summarizeCalled).toBe(true);
-
-    const summaryMessage = state.prompt.find(
-      (m) =>
-        m.role === "system" &&
-        (m.providerOptions as Record<string, unknown>)?.contextManagement &&
-        ((m.providerOptions as Record<string, Record<string, unknown>>).contextManagement).type === "compaction-summary"
-    );
-    expect(summaryMessage).toBeDefined();
-    expect((summaryMessage as { content: string }).content).toContain("Summarized");
-  });
-
-  test("pending compaction is scoped to the calling conversation and agent", async () => {
-    let summarizeCalled = false;
-    const strategy = new CompactionToolStrategy({
-      summarize: async () => {
-        summarizeCalled = true;
-        return "summary";
-      },
-      keepLastMessages: 2,
-    });
-
-    const compactTool = strategy.getOptionalTools().compact_context;
-    await compactTool.execute?.(
-      {},
-      {
-        toolCallId: "tool-call-1",
-        messages: [],
-        experimental_context: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      }
-    );
-
-    const unrelatedState = makeState(makePrompt(), { conversationId: "conv-2", agentId: "agent-2" });
-    await strategy.apply(unrelatedState as unknown as ContextManagementStrategyState);
-
-    expect(summarizeCalled).toBe(false);
-  });
-
-  test("summary is persisted to store", async () => {
+  test("manual compact_context queues and applies a selected span", async () => {
     const store = new InMemoryCompactionStore();
     const strategy = new CompactionToolStrategy({
-      summarize: async () => "Persisted summary text",
-      keepLastMessages: 2,
       compactionStore: store,
     });
+    const prompt = makeAddressablePrompt();
 
-    const compactTool = strategy.getOptionalTools().compact_context;
-    await compactTool.execute?.(
-      {},
+    const result = await strategy.getOptionalTools().compact_context.execute?.(
       {
-        toolCallId: "tool-call-1",
-        messages: [],
-        experimental_context: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      }
-    );
-
-    const state = makeState(makePrompt());
-    await strategy.apply(state as unknown as ContextManagementStrategyState);
-
-    const stored = await store.get({ conversationId: "conv-1", agentId: "agent-1" });
-    expect(stored).toBe("Persisted summary text");
-  });
-
-  test("reports removed tool exchanges", async () => {
-    const strategy = new CompactionToolStrategy({
-      summarize: async () => "summary",
-      keepLastMessages: 1,
-    });
-
-    const compactTool = strategy.getOptionalTools().compact_context;
-    await compactTool.execute?.(
-      {},
-      {
-        toolCallId: "tool-call-1",
-        messages: [],
-        experimental_context: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      }
-    );
-
-    const state = makeState(makePrompt());
-    await strategy.apply(state as unknown as ContextManagementStrategyState);
-
-    expect(state.removedToolExchanges.length).toBeGreaterThan(0);
-    expect(state.removedToolExchanges[0].toolCallId).toBe("call-old");
-    expect(state.removedToolExchanges[0].toolName).toBe("fs_read");
-    expect(state.removedToolExchanges[0].reason).toBe("compaction");
-  });
-
-  test("preserves a tool exchange when the tail boundary would otherwise split it", async () => {
-    const strategy = new CompactionToolStrategy({
-      summarize: async (messages) => `summary:${messages.length}`,
-      keepLastMessages: 2,
-    });
-
-    const compactTool = strategy.getOptionalTools().compact_context;
-    await compactTool.execute?.(
-      {},
-      {
-        toolCallId: "tool-call-1",
-        messages: [],
-        experimental_context: {
-          contextManagement: {
-            conversationId: "conv-1",
-            agentId: "agent-1",
-          },
-        },
-      }
-    );
-
-    const prompt: LanguageModelV3Prompt = [
-      { role: "system", content: "system" },
-      { role: "user", content: [{ type: "text", text: "older" }] },
-      {
-        role: "assistant",
-        content: [{ type: "tool-call", toolCallId: "call-boundary", toolName: "read", input: { path: "a.ts" } }],
+        from: "Investigate parser issue",
+        to: "old comment branch",
+        message: "Parser investigation complete. The old comment branch caused the failure.",
       },
       {
-        role: "tool",
-        content: [{ type: "tool-result", toolCallId: "call-boundary", toolName: "read", output: { type: "text", value: "contents" } }],
-      },
-      { role: "user", content: [{ type: "text", text: "latest" }] },
-    ];
+        toolCallId: "tool-call-1",
+        messages: prompt as never[],
+        experimental_context: {
+          contextManagement: {
+            conversationId: "conv-1",
+            agentId: "agent-1",
+            agentLabel: "executor",
+          },
+        },
+      }
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        compactedMessageCount: 6,
+      })
+    );
 
     const state = makeState(prompt);
     await strategy.apply(state as unknown as ContextManagementStrategyState);
 
     expect(state.prompt.some((message) =>
-      message.role !== "system" &&
-      message.content.some((part) =>
-        (part.type === "tool-call" || part.type === "tool-result") && part.toolCallId === "call-boundary"
-      )
+      message.role === "assistant"
+      && JSON.stringify(message.content).includes("old comment branch caused the failure")
     )).toBe(true);
+    expect(state.prompt.some((message) => JSON.stringify(message.content).includes("Please continue with the fix."))).toBe(true);
+    expect(state.removedToolExchanges).toEqual([
+      {
+        toolCallId: "call-old",
+        toolName: "fs_read",
+        reason: "compaction",
+      },
+    ]);
+
+    const stored = await store.get({ conversationId: "conv-1", agentId: "agent-1" });
+    expect(stored?.edits).toHaveLength(1);
+    expect(stored?.edits[0]?.start.sourceRecordId).toBe("record:1");
+    expect(stored?.edits[0]?.end.sourceRecordId).toBe("record:6");
+  });
+
+  test("omitted anchors compact the full eligible historical span", async () => {
+    const store = new InMemoryCompactionStore();
+    const strategy = new CompactionToolStrategy({
+      compactionStore: store,
+    });
+    const prompt = makeAddressablePrompt();
+
+    const result = await strategy.getOptionalTools().compact_context.execute?.(
+      {
+        message: "Older parser investigation summarized.",
+      },
+      {
+        toolCallId: "tool-call-2",
+        messages: prompt as never[],
+        experimental_context: {
+          contextManagement: {
+            conversationId: "conv-1",
+            agentId: "agent-1",
+          },
+        },
+      }
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        compactedMessageCount: 6,
+      })
+    );
+
+    const state = makeState(prompt);
+    await strategy.apply(state as unknown as ContextManagementStrategyState);
+
+    expect(state.prompt.map((message) => message.role)).toEqual([
+      "system",
+      "assistant",
+      "user",
+    ]);
+  });
+
+  test("rejects ambiguous manual matches", async () => {
+    const strategy = new CompactionToolStrategy({});
+    const basePrompt = makeAddressablePrompt();
+    const prompt = [
+      ...basePrompt.slice(0, 7),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I opened the parser files again." }],
+        id: "message:extra",
+        sourceRecordId: "record:extra",
+        eventId: "event:extra",
+      } as LanguageModelV3Message,
+      ...basePrompt.slice(7),
+    ];
+
+    const result = await strategy.getOptionalTools().compact_context.execute?.(
+      {
+        from: "opened the parser files",
+        message: "ambiguous",
+      },
+      {
+        toolCallId: "tool-call-3",
+        messages: prompt as never[],
+        experimental_context: {
+          contextManagement: {
+            conversationId: "conv-1",
+            agentId: "agent-1",
+          },
+        },
+      }
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "The `from` excerpt matched multiple messages. Use a more specific excerpt.",
+    });
+  });
+
+  test("rejects manual compaction that targets the protected active tail", async () => {
+    const strategy = new CompactionToolStrategy({});
+    const prompt = makeAddressablePrompt();
+
+    const result = await strategy.getOptionalTools().compact_context.execute?.(
+      {
+        from: "Please continue with the fix.",
+        message: "should fail",
+      },
+      {
+        toolCallId: "tool-call-4",
+        messages: prompt as never[],
+        experimental_context: {
+          contextManagement: {
+            conversationId: "conv-1",
+            agentId: "agent-1",
+          },
+        },
+      }
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "The `from` excerpt did not match any eligible historical user or assistant message.",
+    });
+  });
+
+  test("stored compactions reapply and stale edits are pruned", async () => {
+    const store = new InMemoryCompactionStore();
+    await store.set(
+      { conversationId: "conv-1", agentId: "agent-1" },
+      {
+        edits: [{
+          id: "edit-1",
+          source: "manual",
+          start: { sourceRecordId: "record:1" },
+          end: { sourceRecordId: "record:6" },
+          replacement: "Stored parser summary",
+          createdAt: 1,
+          compactedMessageCount: 6,
+        }],
+      }
+    );
+
+    const strategy = new CompactionToolStrategy({
+      compactionStore: store,
+    });
+
+    const state = makeState(makeAddressablePrompt());
+    await strategy.apply(state as unknown as ContextManagementStrategyState);
+    expect(state.prompt.some((message) => JSON.stringify(message.content).includes("Stored parser summary"))).toBe(true);
+
+    const prunedPrompt = makeAddressablePrompt().filter((message) =>
+      (message as { sourceRecordId?: string }).sourceRecordId !== "record:6"
+    );
+    const prunedState = makeState(prunedPrompt);
+    await strategy.apply(prunedState as unknown as ContextManagementStrategyState);
+
+    expect(prunedState.prompt.some((message) => JSON.stringify(message.content).includes("Stored parser summary"))).toBe(false);
+    expect((await store.get({ conversationId: "conv-1", agentId: "agent-1" }))?.edits).toEqual([]);
+  });
+
+  test("auto compaction can absorb earlier compaction summaries into one fresh summary", async () => {
+    const store = new InMemoryCompactionStore();
+    await store.set(
+      { conversationId: "conv-1", agentId: "agent-1" },
+      {
+        edits: [{
+          id: "edit-old",
+          source: "manual",
+          start: { sourceRecordId: "record:1" },
+          end: { sourceRecordId: "record:2" },
+          replacement: "Old parser summary",
+          createdAt: 1,
+          compactedMessageCount: 2,
+        }],
+      }
+    );
+
+    let receivedMessages: LanguageModelV3Message[] = [];
+    const strategy = new CompactionToolStrategy({
+      compactionStore: store,
+      preserveRecentMessages: 1,
+      shouldCompact: () => true,
+      onCompact: async ({ messages }) => {
+        receivedMessages = messages;
+        return "Collapsed history summary";
+      },
+    });
+
+    const state = makeState(makeAddressablePrompt());
+    await strategy.apply(state as unknown as ContextManagementStrategyState);
+
+    expect(receivedMessages.some((message) =>
+      message.role === "assistant"
+      && JSON.stringify(message.content).includes("Old parser summary")
+    )).toBe(true);
+    expect(state.prompt.map((message) => message.role)).toEqual([
+      "system",
+      "assistant",
+      "user",
+    ]);
+
+    const stored = await store.get({ conversationId: "conv-1", agentId: "agent-1" });
+    expect(stored?.edits).toHaveLength(1);
+    expect(stored?.edits[0]?.replacement).toBe("Collapsed history summary");
   });
 });

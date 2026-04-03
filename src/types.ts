@@ -5,7 +5,6 @@ import type {
   LanguageModelV3ToolResultOutput,
 } from "@ai-sdk/provider";
 import type { LanguageModel, ModelMessage, ToolChoice, ToolSet } from "ai";
-import type { SystemReminderContext, SystemReminderEmission } from "ai-sdk-system-reminders";
 
 export const CONTEXT_MANAGEMENT_KEY = "contextManagement";
 
@@ -26,13 +25,101 @@ export interface RemovedToolExchange {
   reason: string;
 }
 
-export type ContextManagementReminder = SystemReminderEmission;
+export type ReminderPlacement =
+  | "overlay-user"
+  | "latest-user-append"
+  | "fallback-system";
+
+export interface ContextManagementReminder {
+  kind: string;
+  content: string;
+  attributes?: Record<string, string>;
+  disposition?: "queue" | "defer";
+  placement?: ReminderPlacement;
+  deliveryMode?: "stateful" | "transient";
+}
+
+export interface ReminderDescriptor {
+  type: string;
+  content: string;
+  attributes?: Record<string, string>;
+}
+
+export interface ReminderRuntimeOverlay {
+  overlayType: string;
+  message: ModelMessage;
+}
+
+export interface ReminderStateStoreKey {
+  conversationId: string;
+  agentId: string;
+}
+
+export interface ReminderProviderState {
+  snapshot: unknown;
+  turnsSinceFullState: number;
+}
+
+export interface ReminderState {
+  providers: Record<string, ReminderProviderState>;
+  deferred: ContextManagementReminder[];
+}
+
+export interface ReminderStateStore {
+  get(key: ReminderStateStoreKey): Promise<ReminderState | undefined> | ReminderState | undefined;
+  set(key: ReminderStateStoreKey, state: ReminderState): Promise<void> | void;
+}
+
+export interface ReminderProviderContext<TData = unknown> {
+  data: TData | undefined;
+  prompt: LanguageModelV3Prompt;
+  requestContext: ContextManagementRequestContext;
+  model?: ContextManagementModelRef;
+  tools?: ToolSet;
+}
+
+export type ReminderProviderDeltaResult = ReminderDescriptor | null | "full";
+
+export interface ReminderProvider<TData = unknown, TSnapshot = unknown> {
+  type: string;
+  fullInterval?: number;
+  placement?:
+    | ReminderPlacement
+    | ((context: ReminderProviderContext<TData>) => ReminderPlacement);
+  snapshot(
+    data: TData | undefined,
+    context: ReminderProviderContext<TData>
+  ): TSnapshot | Promise<TSnapshot>;
+  renderFull(
+    snapshot: TSnapshot,
+    data: TData | undefined,
+    context: ReminderProviderContext<TData>
+  ): ReminderDescriptor | null | Promise<ReminderDescriptor | null>;
+  renderDelta?(
+    previous: TSnapshot,
+    current: TSnapshot,
+    data: TData | undefined,
+    context: ReminderProviderContext<TData>
+  ): ReminderProviderDeltaResult | Promise<ReminderProviderDeltaResult>;
+}
+
+export interface ReminderPlacementPolicyContext<TData = unknown> extends ReminderProviderContext<TData> {
+  type: string;
+  defaultPlacement: ReminderPlacement;
+  builtIn: boolean;
+}
+
+export type ReminderPlacementPolicy<TData = unknown> = (
+  context: ReminderPlacementPolicyContext<TData>
+) => ReminderPlacement;
 
 export interface ContextManagementRequestParams {
   prompt: LanguageModelV3Prompt;
   tools?: ToolSet;
   toolChoice?: ToolChoice<ToolSet>;
   providerOptions?: LanguageModelV3CallOptions["providerOptions"];
+  reminderData?: unknown;
+  queuedReminders?: ContextManagementReminder[];
 }
 
 export interface ContextManagementStrategyState {
@@ -40,13 +127,17 @@ export interface ContextManagementStrategyState {
   readonly prompt: LanguageModelV3Prompt;
   readonly requestContext: ContextManagementRequestContext;
   readonly model?: ContextManagementModelRef;
+  readonly lastReportedModelInputTokens?: number;
+  readonly reminderData?: unknown;
   readonly removedToolExchanges: readonly RemovedToolExchange[];
   readonly pinnedToolCallIds: ReadonlySet<string>;
   updatePrompt(prompt: LanguageModelV3Prompt): void;
   updateParams(patch: Partial<ContextManagementRequestParams>): void;
   addRemovedToolExchanges(exchanges: RemovedToolExchange[]): void;
   addPinnedToolCallIds(toolCallIds: string[]): void;
-  emitReminder(reminder: SystemReminderEmission): Promise<void>;
+  addRuntimeOverlay(overlay: ReminderRuntimeOverlay): void;
+  consumeReminderQueue(): ContextManagementReminder[];
+  emitReminder(reminder: ContextManagementReminder): Promise<void>;
 }
 
 export interface ContextManagementStrategyExecution {
@@ -171,7 +262,6 @@ export interface CreateContextManagementRuntimeOptions {
   strategies: ContextManagementStrategy[];
   telemetry?: ContextManagementTelemetrySink;
   estimator?: PromptTokenEstimator;
-  systemReminderContext?: Pick<SystemReminderContext<unknown>, "queue" | "defer">;
 }
 
 export interface PrepareContextManagementRequestOptions {
@@ -181,12 +271,15 @@ export interface PrepareContextManagementRequestOptions {
   toolChoice?: ToolChoice<ToolSet>;
   providerOptions?: LanguageModelV3CallOptions["providerOptions"];
   model?: ContextManagementModelRef;
+  reminderData?: unknown;
+  queuedReminders?: ContextManagementReminder[];
 }
 
 export interface ContextManagementPreparedRequest {
   messages: ModelMessage[];
   providerOptions?: LanguageModelV3CallOptions["providerOptions"];
   toolChoice?: ToolChoice<ToolSet>;
+  runtimeOverlays?: ReminderRuntimeOverlay[];
   reportActualUsage(actualInputTokens: number | null | undefined): Promise<void>;
 }
 
@@ -248,23 +341,33 @@ export interface ToolResultDecayStrategyOptions {
   warningForecastExtraTokens?: number;
 }
 
-export interface SystemPromptCachingStrategyOptions {
-  consolidateSystemMessages?: boolean;
-}
-
-export interface ContextUtilizationReminderStrategyOptions {
+export interface ReminderContextUtilizationSourceOptions {
   budgetProfile: ContextBudgetProfile;
   warningThresholdRatio?: number;
   mode?: "scratchpad" | "generic";
+  placement?: ReminderPlacement;
 }
 
-export interface ContextWindowStatusStrategyOptions {
-  budgetProfile?: ContextBudgetProfile;
-  requestEstimator?: PromptTokenEstimator;
+export interface ReminderContextWindowStatusSourceOptions {
   getContextWindow?: (options: {
     model?: ContextManagementModelRef;
     requestContext: ContextManagementRequestContext;
   }) => number | undefined;
+  placement?: ReminderPlacement;
+}
+
+export interface RemindersStrategyOptions<TData = unknown> {
+  stateStore?: ReminderStateStore;
+  providers?: Array<ReminderProvider<TData, unknown>>;
+  placementPolicy?: ReminderPlacementPolicy<TData>;
+  contextUtilization?: false | ReminderContextUtilizationSourceOptions;
+  contextWindowStatus?: false | ReminderContextWindowStatusSourceOptions;
+  overlayType?: string;
+}
+
+export interface AnthropicPromptCachingStrategyOptions {
+  ttl?: "5m" | "1h";
+  clearToolUses?: boolean;
 }
 
 export interface SummarizationStrategyOptions {
@@ -290,16 +393,74 @@ export interface CompactionStoreKey {
   agentId: string;
 }
 
+export interface CompactionAnchor {
+  sourceRecordId?: string;
+  eventId?: string;
+  messageId?: string;
+}
+
+export interface CompactionEdit {
+  id: string;
+  source: "manual" | "auto";
+  start: CompactionAnchor;
+  end: CompactionAnchor;
+  replacement: string;
+  createdAt: number;
+  compactedMessageCount: number;
+  fromText?: string;
+  toText?: string;
+}
+
+export interface CompactionState {
+  edits: CompactionEdit[];
+  updatedAt?: number;
+  agentLabel?: string;
+}
+
 export interface CompactionStore {
-  get(key: CompactionStoreKey): Promise<string | undefined> | string | undefined;
-  set(key: CompactionStoreKey, summary: string): Promise<void> | void;
+  get(key: CompactionStoreKey): Promise<CompactionState | undefined> | CompactionState | undefined;
+  set(key: CompactionStoreKey, state: CompactionState): Promise<void> | void;
+}
+
+export interface CompactionToolInput {
+  message: string;
+  from?: string;
+  to?: string;
+}
+
+export type CompactionToolResult =
+  | {
+    ok: true;
+    queuedEditId: string;
+    compactedMessageCount: number;
+    fromText?: string;
+    toText?: string;
+  }
+  | {
+    ok: false;
+    error: string;
+  };
+
+export interface CompactionShouldCompactArgs {
+  state: ContextManagementStrategyState;
+  prompt: LanguageModelV3Prompt;
+}
+
+export interface CompactionOnCompactArgs {
+  state: ContextManagementStrategyState;
+  prompt: LanguageModelV3Prompt;
+  messages: LanguageModelV3Message[];
 }
 
 export interface CompactionToolStrategyOptions {
-  summarize: (messages: LanguageModelV3Message[]) => Promise<string>;
-  keepLastMessages?: number;
+  shouldCompact?: (
+    args: CompactionShouldCompactArgs
+  ) => Promise<boolean> | boolean;
+  onCompact?: (
+    args: CompactionOnCompactArgs
+  ) => Promise<string> | string;
+  preserveRecentMessages?: number;
   compactionStore?: CompactionStore;
-  estimator?: PromptTokenEstimator;
 }
 
 export interface PinnedStoreKey {
@@ -333,7 +494,6 @@ export interface ScratchpadState {
   entries?: Record<string, string>;
   preserveTurns?: number | null;
   activeNotice?: ScratchpadUseNotice;
-  omitToolCallIds: string[];
   updatedAt?: number;
   agentLabel?: string;
 }
@@ -372,7 +532,6 @@ export interface ScratchpadToolInput {
   replaceEntries?: Record<string, string>;
   removeEntryKeys?: string[];
   preserveTurns?: number | null;
-  omitToolCallIds?: string[];
 }
 
 export type ScratchpadToolResult =
@@ -385,14 +544,6 @@ export interface SlidingWindowStrategyPayload {
   keepLastMessages: number;
   maxPromptTokens?: number;
   messagesRemoved: number;
-}
-
-export interface SystemPromptCachingStrategyPayload {
-  kind: "system-prompt-caching";
-  consolidateSystemMessages: boolean;
-  systemMessageCountBefore: number;
-  systemMessageCountAfter: number;
-  taggedSystemMessageCount: number;
 }
 
 export interface ToolResultDecayStrategyPayload {
@@ -423,7 +574,6 @@ export interface ScratchpadStrategyPayload {
   activeNoticeToolCallId?: string;
   activeNoticeRawTurnCountAtCall?: number;
   activeNoticeProjectedTurnCountAtCall?: number;
-  appliedOmitCount: number;
   otherScratchpadCount: number;
   estimatedTokens: number;
   forceToolThresholdRatio?: number;
@@ -441,40 +591,34 @@ export interface SummarizationStrategyPayload {
   summaryCharCount?: number;
 }
 
-export interface ContextUtilizationReminderStrategyPayload {
-  kind: "context-utilization-reminder";
-  currentTokens: number;
-  warningThresholdTokens: number;
-  warningThresholdRatio: number;
-  utilizationPercent?: number;
-  mode: "scratchpad" | "generic";
-  budgetLabel: string;
-  budgetDescription?: string;
-  reminderText?: string;
+export interface RemindersStrategyPayload {
+  kind: "reminders";
+  providerCount: number;
+  builtInCount: number;
+  emittedCount: number;
+  deferredCount: number;
+  overlayCount: number;
+  latestUserAppendCount: number;
+  fallbackSystemCount: number;
+  reminderTypes: string[];
 }
 
-export interface ContextWindowStatusStrategyPayload {
-  kind: "context-window-status";
-  estimatedPromptTokens: number;
-  estimatedMessageTokens: number;
-  estimatedToolTokens: number;
-  rawContextWindow?: number;
-  rawContextUtilizationPercent?: number;
-  budgetLabel?: string;
-  budgetDescription?: string;
-  budgetScopedTokens?: number;
-  staticOverheadTokens?: number;
-  workingTokenBudget?: number;
-  workingBudgetUtilizationPercent?: number;
-  reminderText: string;
+export interface AnthropicPromptCachingStrategyPayload {
+  kind: "anthropic-prompt-caching";
+  sharedPrefixMessageCount: number;
+  lastSharedMessageIndex?: number;
+  breakpointApplied: boolean;
+  clearToolUsesEnabled: boolean;
 }
 
 export interface CompactionToolStrategyPayload {
   kind: "compaction-tool";
-  keepLastMessages?: number;
-  storedSummary?: string;
-  messagesToSummarize?: LanguageModelV3Message[];
-  summaryText?: string;
+  mode: "manual" | "auto" | "stored";
+  editCount: number;
+  compactedMessageCount: number;
+  fromIndex?: number;
+  toIndex?: number;
+  summaryCharCount: number;
 }
 
 export interface PinnedMessagesStrategyPayload {
@@ -491,12 +635,11 @@ export interface CustomStrategyPayload {
 
 export type ContextManagementStrategyPayload =
   | SlidingWindowStrategyPayload
-  | SystemPromptCachingStrategyPayload
   | ToolResultDecayStrategyPayload
   | ScratchpadStrategyPayload
   | SummarizationStrategyPayload
-  | ContextUtilizationReminderStrategyPayload
-  | ContextWindowStatusStrategyPayload
+  | RemindersStrategyPayload
+  | AnthropicPromptCachingStrategyPayload
   | CompactionToolStrategyPayload
   | PinnedMessagesStrategyPayload
   | CustomStrategyPayload;

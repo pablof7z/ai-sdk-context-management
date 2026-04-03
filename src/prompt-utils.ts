@@ -1,4 +1,5 @@
 import type {
+  JSONObject,
   LanguageModelV3CallOptions,
   LanguageModelV3Message,
   LanguageModelV3Prompt,
@@ -53,11 +54,25 @@ function cloneUnknown<T>(value: T): T {
   return value;
 }
 
-function buildReminderSystemMessage(reminderText: string): LanguageModelV3Message {
+export function buildContextManagementSystemMessage(
+  content: string,
+  metadata: JSONObject = { type: "reminder" }
+): LanguageModelV3Message {
   return {
     role: "system",
-    content: reminderText,
-    providerOptions: { contextManagement: { type: "reminder" } },
+    content,
+    providerOptions: { contextManagement: metadata },
+  };
+}
+
+export function buildContextManagementUserOverlayMessage(
+  content: string,
+  metadata: JSONObject = { type: "reminder-overlay" }
+): Extract<LanguageModelV3Message, { role: "user" }> {
+  return {
+    role: "user",
+    content: [{ type: "text", text: content }],
+    providerOptions: { contextManagement: metadata },
   };
 }
 
@@ -1208,12 +1223,20 @@ export function appendReminderToLatestUserMessage(
       continue;
     }
 
+    const content = [...message.content];
+    const lastPart = content.at(-1);
+    if (lastPart?.type === "text") {
+      content[content.length - 1] = {
+        ...lastPart,
+        text: `${lastPart.text}\n\n${reminderText}`,
+      };
+    } else {
+      content.push({ type: "text", text: reminderText });
+    }
+
     cloned[index] = {
       ...message,
-      content: [
-        ...message.content,
-        { type: "text", text: reminderText },
-      ],
+      content,
     };
     return cloned;
   }
@@ -1223,6 +1246,6 @@ export function appendReminderToLatestUserMessage(
       (lastIndex, message, index) => (message.role === "system" ? index : lastIndex),
       -1
     ) + 1;
-  cloned.splice(insertIndex, 0, buildReminderSystemMessage(reminderText));
+  cloned.splice(insertIndex, 0, buildContextManagementSystemMessage(reminderText));
   return cloned;
 }

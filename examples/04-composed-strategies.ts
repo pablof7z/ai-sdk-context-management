@@ -3,10 +3,9 @@
  */
 import type { ModelMessage } from "ai";
 import {
-  ContextUtilizationReminderStrategy,
+  RemindersStrategy,
   SummarizationStrategy,
   ScratchpadStrategy,
-  SystemPromptCachingStrategy,
   ToolResultDecayStrategy,
   createContextManagementRuntime,
   createDefaultPromptTokenEstimator,
@@ -29,7 +28,6 @@ async function main() {
 
   const runtime = createContextManagementRuntime({
     strategies: [
-      new SystemPromptCachingStrategy(),
       new ToolResultDecayStrategy({
         maxResultTokens: 10,
         placeholderMinSourceTokens: 0,
@@ -59,13 +57,15 @@ async function main() {
               })),
         },
       }),
-      new ContextUtilizationReminderStrategy({
-        budgetProfile: {
-          tokenBudget: 200,
-          estimator,
+      new RemindersStrategy({
+        contextUtilization: {
+          budgetProfile: {
+            tokenBudget: 200,
+            estimator,
+          },
+          warningThresholdRatio: 0.6,
+          mode: "scratchpad",
         },
-        warningThresholdRatio: 0.6,
-        mode: "scratchpad",
       }),
     ],
     estimator,
@@ -151,10 +151,9 @@ async function main() {
 
   printPrompt("Prompt after the composed stack", capturedPrompts[0]);
   console.log("\nWhat changed:");
-  console.log("- system messages were normalized to the front");
   console.log("- old tool results were shortened before summarization kicked in");
   console.log("- the agent scratchpad was injected as a reminder block");
-  console.log("- a utilization warning appeared once the working budget got tight");
+  console.log("- a unified reminders strategy added the utilization warning once the working budget got tight");
   console.log(`\nTelemetry: ${telemetryEvents.join(", ")}`);
   console.log(`\nModel output: ${result.text}`);
 }

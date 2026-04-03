@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-context-management",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Explicit context management strategies for AI SDK language models",
   "type": "module",
   "main": "./dist/index.js",
@@ -44,9 +44,7 @@
     "ai": ">=6.0.0",
     "@ai-sdk/provider": ">=1.0.0"
   },
-  "dependencies": {
-    "ai-sdk-system-reminders": "^0.3.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "ai": "^6.0.116",
     "@ai-sdk/provider": "^3.0.8",
