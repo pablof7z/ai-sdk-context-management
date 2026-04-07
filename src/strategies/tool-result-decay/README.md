@@ -1,6 +1,6 @@
 # ToolResultDecayStrategy
 
-Replaces oversized tool outputs with placeholders based on age and tool-context pressure while preserving the surrounding tool-call structure.
+Replaces oversized tool outputs with placeholders in stable batches based on age and tool-context pressure while preserving the surrounding tool-call structure.
 
 The strategy is always-on. Total prompt size is telemetry, not an activation gate.
 
@@ -8,7 +8,7 @@ The strategy is always-on. Total prompt size is telemetry, not an activation gat
 
 - newest tool results stay verbatim
 - low-pressure tool sessions decay slowly even at deeper depths
-- older or higher-pressure large results become placeholders
+- older or higher-pressure large results become placeholders in chunks instead of one-by-one
 - smaller over-budget payloads stay intact instead of being partially shortened
 
 ## What The Agent Gets
@@ -16,7 +16,7 @@ The strategy is always-on. Total prompt size is telemetry, not an activation gat
 - recent observations stay detailed
 - old reasoning chains remain understandable
 - pressure ramps up only when tool inputs and outputs actually consume significant context
-- reminder delivery can surface a forecast of which tool-call IDs are next at risk
+- reminder delivery can warn when the next placeholder batch is about to start
 
 ## Decay Shape
 
@@ -38,10 +38,12 @@ So very small tool payloads can survive for many turns, around `~5k` tool tokens
   Sets the base per-result budget before pressure/depth are applied. Default: `200`.
 - `placeholderMinSourceTokens`
   Minimum estimated size of a tool input or output before placeholdering is allowed. Smaller payloads stay intact instead. Default: `800`.
+- `minPlaceholderBatchSize`
+  Minimum number of eligible items before placeholders are applied. Older eligible items are replaced as one stable batch. Default: `10`.
 - `pressureAnchors`
   Custom `(toolTokens, depthFactor)` control points for the pressure curve.
 - `warningForecastExtraTokens`
-  Extra tool-context tokens to assume when forecasting "use it or lose it" warnings. Default: `10_000`.
+  Extra tool-context tokens to assume when forecasting whether the next placeholder batch is about to start. Default: `10_000`.
 - `placeholder`
   String or formatter function used for placeholder text.
 - `decayInputs`
@@ -49,7 +51,7 @@ So very small tool payloads can survive for many turns, around `~5k` tool tokens
 
 ## Reminder Attributes
 
-When reminder delivery is enabled, decay warnings include:
+When reminder delivery is enabled, threshold warnings include:
 
 - `tool_call_ids`
 - `placeholder_ids`

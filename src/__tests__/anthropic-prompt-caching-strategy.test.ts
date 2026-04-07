@@ -77,7 +77,7 @@ describe("AnthropicPromptCachingStrategy", () => {
     const runtime = createContextManagementRuntime({
       strategies: [
         new AnthropicPromptCachingStrategy({
-          clearToolUses: false,
+          serverToolEditing: false,
         }),
       ],
     });
@@ -146,6 +146,7 @@ describe("AnthropicPromptCachingStrategy", () => {
         new ToolResultDecayStrategy({
           maxResultTokens: 10,
           placeholderMinSourceTokens: 1,
+          minPlaceholderBatchSize: 1,
           pressureAnchors: [
             { toolTokens: 1, depthFactor: 1 },
             { toolTokens: 5_000, depthFactor: 1 },
@@ -154,7 +155,7 @@ describe("AnthropicPromptCachingStrategy", () => {
           warningForecastExtraTokens: 0,
         }),
         new AnthropicPromptCachingStrategy({
-          clearToolUses: false,
+          serverToolEditing: false,
         }),
       ],
     });
@@ -233,5 +234,129 @@ describe("AnthropicPromptCachingStrategy", () => {
       type: "text",
       value: "[result omitted]",
     });
+  });
+
+  test("can disable Anthropic server-side tool editing without disabling shared-prefix caching", async () => {
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        new AnthropicPromptCachingStrategy({
+          serverToolEditing: false,
+        }),
+      ],
+    });
+
+    await runtime.prepareRequest({
+      requestContext,
+      messages: [
+        { role: "system", content: "Base system prompt." },
+        { role: "user", content: [{ type: "text", text: "Shared repository context." }] },
+        { role: "assistant", content: [{ type: "text", text: "I already reviewed the shared setup." }] },
+        { role: "user", content: [{ type: "text", text: "Review parser.ts." }] },
+      ],
+      model: {
+        provider: "anthropic",
+        modelId: "claude-test",
+      },
+    });
+
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: [
+        { role: "system", content: "Base system prompt." },
+        { role: "user", content: [{ type: "text", text: "Shared repository context." }] },
+        { role: "assistant", content: [{ type: "text", text: "I already reviewed the shared setup." }] },
+        { role: "user", content: [{ type: "text", text: "Review tokenizer.ts." }] },
+      ],
+      model: {
+        provider: "anthropic",
+        modelId: "claude-test",
+      },
+    });
+
+    expect(prepared.providerOptions).toBeUndefined();
+    expect(prepared.messages[2]?.providerOptions).toEqual(
+      expect.objectContaining({
+        anthropic: expect.objectContaining({
+          cacheControl: {
+            type: "ephemeral",
+            ttl: "1h",
+          },
+        }),
+      })
+    );
+  });
+
+  test("supports custom Anthropic server-side tool editing knobs", async () => {
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        new AnthropicPromptCachingStrategy({
+          ttl: "5m",
+          serverToolEditing: {
+            triggerToolUses: 40,
+            keepToolUses: 12,
+            clearAtLeastInputTokens: 8000,
+            clearToolInputs: false,
+            excludeTools: ["delegate", "shell"],
+          },
+        }),
+      ],
+    });
+
+    await runtime.prepareRequest({
+      requestContext,
+      messages: [
+        { role: "system", content: "Base system prompt." },
+        { role: "user", content: [{ type: "text", text: "Shared repository context." }] },
+        { role: "assistant", content: [{ type: "text", text: "I already reviewed the shared setup." }] },
+        { role: "user", content: [{ type: "text", text: "Review parser.ts." }] },
+      ],
+      model: {
+        provider: "anthropic",
+        modelId: "claude-test",
+      },
+    });
+
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: [
+        { role: "system", content: "Base system prompt." },
+        { role: "user", content: [{ type: "text", text: "Shared repository context." }] },
+        { role: "assistant", content: [{ type: "text", text: "I already reviewed the shared setup." }] },
+        { role: "user", content: [{ type: "text", text: "Review tokenizer.ts." }] },
+      ],
+      model: {
+        provider: "anthropic",
+        modelId: "claude-test",
+      },
+    });
+
+    expect(prepared.providerOptions).toEqual(
+      expect.objectContaining({
+        anthropic: expect.objectContaining({
+          contextManagement: expect.objectContaining({
+            edits: expect.arrayContaining([
+              expect.objectContaining({
+                type: "clear_tool_uses_20250919",
+                trigger: { type: "tool_uses", value: 40 },
+                keep: { type: "tool_uses", value: 12 },
+                clearAtLeast: { type: "input_tokens", value: 8000 },
+                clearToolInputs: false,
+                excludeTools: ["delegate", "shell"],
+              }),
+            ]),
+          }),
+        }),
+      })
+    );
+    expect(prepared.messages[2]?.providerOptions).toEqual(
+      expect.objectContaining({
+        anthropic: expect.objectContaining({
+          cacheControl: {
+            type: "ephemeral",
+            ttl: "5m",
+          },
+        }),
+      })
+    );
   });
 });

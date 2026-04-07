@@ -86,6 +86,19 @@ function buildReminderBlock(options: {
   return lines.join("\n");
 }
 
+function hasScratchpadState(state: ScratchpadState): boolean {
+  return Object.keys(state.entries ?? {}).length > 0
+    || state.activeNotice !== undefined
+    || typeof state.preserveTurns === "number";
+}
+
+function hasVisibleOtherScratchpads(entries: ScratchpadConversationEntry[]): boolean {
+  return entries.some((entry) => {
+    const body = renderScratchpadState(normalizeScratchpadState(entry.state));
+    return body.length > 0 && !(body.length === 1 && body[0] === "(empty)");
+  });
+}
+
 export class ScratchpadStrategy implements ContextManagementStrategy {
   readonly name = "scratchpad";
   private readonly scratchpadStore: ScratchpadStore;
@@ -170,18 +183,25 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
       && !alreadyForcedToScratchpad
       && !justCalledScratchpad;
 
-    const reminderBlock = buildReminderBlock({
-      currentState,
-      currentContext: state.requestContext,
-      otherScratchpads: allScratchpads,
-      emptyStateGuidanceLines: this.emptyStateGuidanceLines,
-      forced: shouldForceToolChoice,
-    });
+    const shouldRenderReminder = shouldForceToolChoice
+      || hasScratchpadState(currentState)
+      || hasVisibleOtherScratchpads(allScratchpads)
+      || this.emptyStateGuidanceLines.length > 0;
 
-    await state.emitReminder({
-      kind: "scratchpad",
-      content: reminderBlock,
-    });
+    if (shouldRenderReminder) {
+      const reminderBlock = buildReminderBlock({
+        currentState,
+        currentContext: state.requestContext,
+        otherScratchpads: allScratchpads,
+        emptyStateGuidanceLines: this.emptyStateGuidanceLines,
+        forced: shouldForceToolChoice,
+      });
+
+      await state.emitReminder({
+        kind: "scratchpad",
+        content: reminderBlock,
+      });
+    }
 
     if (shouldForceToolChoice) {
       this.forcedOnLastApply = true;
@@ -194,10 +214,16 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
     }
 
     return {
-      outcome: shouldForceToolChoice ? "applied" : undefined,
+      outcome: shouldForceToolChoice
+        ? "applied"
+        : shouldRenderReminder
+          ? undefined
+          : "skipped",
       reason: shouldForceToolChoice
         ? "scratchpad-rendered-and-tool-forced"
-        : "scratchpad-rendered",
+        : shouldRenderReminder
+          ? "scratchpad-rendered"
+          : "scratchpad-idle",
       ...(this.budgetProfile !== undefined ? { workingTokenBudget: this.budgetProfile.tokenBudget } : {}),
       payloads: {
         kind: "scratchpad",

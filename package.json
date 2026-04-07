@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-context-management",
-  "version": "0.12.0",
+  "version": "0.12.2",
   "description": "Explicit context management strategies for AI SDK language models",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,7 +13,8 @@
   },
   "files": [
     "dist",
-    "docs",
+    "docs/plans/**/*.md",
+    "docs/strategies/**/*.md",
     "src/strategies/**/*.md",
     "examples/*.ts",
     "examples/README.md",

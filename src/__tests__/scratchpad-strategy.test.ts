@@ -299,8 +299,9 @@ describe("ScratchpadStrategy", () => {
 
     const defaultReminderText = latestUserReminderText(defaultState.prompt);
     expect(defaultReminderText).not.toContain("Suggested entry names for this run:");
-    expect(defaultReminderText).toContain("Your scratchpad (Alpha):");
+    expect(defaultReminderText).not.toContain("Your scratchpad (Alpha):");
     expect(defaultReminderText).not.toContain("Use scratchpad(...) proactively and often");
+    expect(defaultReminderText).toBe("latest user");
 
     const configuredStore = new InMemoryScratchpadStore();
     const configuredStrategy = new ScratchpadStrategy({
@@ -800,7 +801,8 @@ describe("ScratchpadStrategy", () => {
     expect(state.params.toolChoice).toBeUndefined();
     expect(result).toEqual(
       expect.objectContaining({
-        reason: "scratchpad-rendered",
+        outcome: "skipped",
+        reason: "scratchpad-idle",
         payloads: expect.objectContaining({
           forcedToolChoice: false,
           latestToolName: "scratchpad",

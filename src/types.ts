@@ -334,6 +334,7 @@ export interface ToolResultDecayPressureAnchor {
 export interface ToolResultDecayStrategyOptions {
   maxResultTokens?: number;
   placeholderMinSourceTokens?: number;
+  minPlaceholderBatchSize?: number;
   placeholder?: string | ((context: DecayedToolContext) => string);
   decayInputs?: boolean;
   estimator?: PromptTokenEstimator;
@@ -365,9 +366,19 @@ export interface RemindersStrategyOptions<TData = unknown> {
   overlayType?: string;
 }
 
+export interface AnthropicServerToolEditingOptions {
+  enabled?: boolean;
+  triggerToolUses?: number;
+  keepToolUses?: number;
+  clearAtLeastInputTokens?: number;
+  clearToolInputs?: boolean;
+  excludeTools?: string[];
+}
+
 export interface AnthropicPromptCachingStrategyOptions {
   ttl?: "5m" | "1h";
   clearToolUses?: boolean;
+  serverToolEditing?: boolean | AnthropicServerToolEditingOptions;
 }
 
 export interface SummarizationStrategyOptions {
@@ -555,6 +566,7 @@ export interface ToolResultDecayStrategyPayload {
   currentPromptTokens: number;
   maxResultTokens: number;
   placeholderMinSourceTokens: number;
+  minPlaceholderBatchSize: number;
   pressureAnchors: ToolResultDecayPressureAnchor[];
   warningForecastExtraTokens: number;
   toolContextTokens?: number;

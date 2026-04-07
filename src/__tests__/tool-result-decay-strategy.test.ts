@@ -15,6 +15,7 @@ const DEPTH_ONLY_PRESSURE_ANCHORS = [
 
 function createDepthOnlyStrategy(options: ToolResultDecayStrategyOptions = {}) {
   return new ToolResultDecayStrategy({
+    minPlaceholderBatchSize: 1,
     ...options,
     pressureAnchors: DEPTH_ONLY_PRESSURE_ANCHORS,
   });
@@ -697,8 +698,11 @@ describe("ToolResultDecayStrategy", () => {
     await strategy.apply(state);
 
     expect(capturedReminders).toHaveLength(1);
+    expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
+    expect(capturedReminders[0].deliveryMode).toBe("stateful");
+    expect(capturedReminders[0].content).toContain("Context window under pressure");
+    expect(capturedReminders[0].content).toContain("Soon some tools you used will be removed from your context");
     expect(capturedReminders[0].content).toContain("call-0");
-    expect(capturedReminders[0].content).toContain("placeholder");
   });
 
   test("warning reminder emitted for very large results exceeding baseMaxChars", async () => {
@@ -716,9 +720,9 @@ describe("ToolResultDecayStrategy", () => {
 
     expect(capturedReminders).toHaveLength(1);
     expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
+    expect(capturedReminders[0].deliveryMode).toBe("stateful");
     expect(capturedReminders[0].content).toContain("call-0");
-    expect(capturedReminders[0].content).toContain("read_file");
-    expect(capturedReminders[0].content).toContain("placeholder");
+    expect(capturedReminders[0].content).toContain("Soon some tools you used will be removed from your context");
   });
 
   test("no warning for small results", async () => {
@@ -925,7 +929,7 @@ describe("ToolResultDecayStrategy", () => {
     await strategy.apply(state);
 
     expect(capturedReminders).toHaveLength(1);
-    expect(capturedReminders[0].content).toContain("[read_file id:call-0]");
+    expect(capturedReminders[0].content).toContain("call-0");
   });
 
   test("all calls in the same batch turn share depth 0 and are never immediately decayed", async () => {
@@ -1075,7 +1079,7 @@ describe("ToolResultDecayStrategy", () => {
       { id: "call-1", name: "tool_1", output: { type: "text" as const, value: hugeOutput } },
     ];
     const prompt = makeToolPromptWithOutputs(outputs);
-    const strategy = new ToolResultDecayStrategy();
+    const strategy = new ToolResultDecayStrategy({ minPlaceholderBatchSize: 1 });
     const { state } = createMockState(prompt);
 
     await strategy.apply(state);
@@ -1086,29 +1090,106 @@ describe("ToolResultDecayStrategy", () => {
     expect(getToolResultOutput(state.prompt, "call-1")).toBe(hugeOutput);
   });
 
-  test("warning payloads only report placeholder transitions", async () => {
+  test("warning payloads report the first pending placeholder batch", async () => {
     const mediumOutput = "x".repeat(5000);
-    const outputs = Array.from({ length: 5 }, (_, i) => ({
+    const outputs = Array.from({ length: 11 }, (_, i) => ({
       id: `call-${i}`,
       name: `tool_${i}`,
       output: { type: "text" as const, value: mediumOutput },
     }));
     const prompt = makeToolPromptWithOutputs(outputs);
-    const strategy = createDepthOnlyStrategy({ maxResultTokens: 2000 });
+    const strategy = new ToolResultDecayStrategy({
+      maxResultTokens: 2000,
+      pressureAnchors: DEPTH_ONLY_PRESSURE_ANCHORS,
+    });
     const { state, capturedReminders } = createMockState(prompt);
 
     const result = await strategy.apply(state);
 
     expect(capturedReminders).toHaveLength(1);
     expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
-    expect(capturedReminders[0].content).toContain("10,000");
-    expect(capturedReminders[0].attributes?.tool_call_ids).toBe("call-3");
-    expect(capturedReminders[0].attributes?.placeholder_ids).toBe("call-3");
+    expect(capturedReminders[0].deliveryMode).toBe("stateful");
+    expect(capturedReminders[0].content).toContain("Context window under pressure");
+    expect(capturedReminders[0].attributes?.tool_call_ids).toBe(
+      "call-0,call-1,call-2,call-3,call-4,call-5,call-6,call-7,call-8,call-9"
+    );
+    expect(capturedReminders[0].attributes?.placeholder_ids).toBe(
+      "call-0,call-1,call-2,call-3,call-4,call-5,call-6,call-7,call-8,call-9"
+    );
     expect(capturedReminders[0].attributes).not.toHaveProperty("truncate_ids");
     expect(result.payloads).toHaveProperty("warningToolCallIds");
     expect(result.payloads).toHaveProperty("warningPlaceholderIds");
     expect(result.payloads).not.toHaveProperty("warningTruncateIds");
-    expect((result.payloads as Record<string, unknown>).warningToolCallIds).toEqual(["call-3"]);
-    expect((result.payloads as Record<string, unknown>).warningPlaceholderIds).toEqual(["call-3"]);
+    expect((result.payloads as Record<string, unknown>).warningToolCallIds).toEqual([
+      "call-0",
+      "call-1",
+      "call-2",
+      "call-3",
+      "call-4",
+      "call-5",
+      "call-6",
+      "call-7",
+      "call-8",
+      "call-9",
+    ]);
+    expect((result.payloads as Record<string, unknown>).warningPlaceholderIds).toEqual([
+      "call-0",
+      "call-1",
+      "call-2",
+      "call-3",
+      "call-4",
+      "call-5",
+      "call-6",
+      "call-7",
+      "call-8",
+      "call-9",
+    ]);
+  });
+
+  test("default batching warns when the next placeholder chunk reaches the threshold", async () => {
+    const largeOutput = "x".repeat(5000);
+    const outputs = Array.from({ length: 10 }, (_, i) => ({
+      id: `call-${i}`,
+      name: `tool_${i}`,
+      output: { type: "text" as const, value: largeOutput },
+    }));
+    const prompt = makeToolPromptWithOutputs(outputs);
+    const strategy = new ToolResultDecayStrategy({
+      pressureAnchors: DEPTH_ONLY_PRESSURE_ANCHORS,
+    });
+    const { state, capturedReminders, capturedRemoved } = createMockState(prompt);
+
+    const result = await strategy.apply(state);
+
+    expect(capturedReminders).toHaveLength(1);
+    expect(capturedReminders[0].kind).toBe("tool-result-decay-warning");
+    expect(capturedReminders[0].content).toContain("call-0");
+    expect(capturedReminders[0].content).toContain("call-9");
+    expect(capturedRemoved).toHaveLength(0);
+    expect(getToolResultOutput(state.prompt, "call-0")).toBe(largeOutput);
+    expect((result.payloads as Record<string, unknown>).warningCount).toBe(10);
+  });
+
+  test("default batching placeholder-replaces the first full chunk once enough items are eligible", async () => {
+    const largeOutput = "x".repeat(5000);
+    const outputs = Array.from({ length: 11 }, (_, i) => ({
+      id: `call-${i}`,
+      name: `tool_${i}`,
+      output: { type: "text" as const, value: largeOutput },
+    }));
+    const prompt = makeToolPromptWithOutputs(outputs);
+    const strategy = new ToolResultDecayStrategy({
+      pressureAnchors: DEPTH_ONLY_PRESSURE_ANCHORS,
+    });
+    const { state, capturedReminders, capturedRemoved } = createMockState(prompt);
+
+    const result = await strategy.apply(state);
+
+    expect(capturedReminders).toHaveLength(0);
+    expect(capturedRemoved).toHaveLength(10);
+    expect(getToolResultOutput(state.prompt, "call-0")).toBe("[result omitted]");
+    expect(getToolResultOutput(state.prompt, "call-9")).toBe("[result omitted]");
+    expect(getToolResultOutput(state.prompt, "call-10")).toBe(largeOutput);
+    expect((result.payloads as Record<string, unknown>).placeholderCount).toBe(10);
   });
 });

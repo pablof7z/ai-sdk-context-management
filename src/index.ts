@@ -81,6 +81,7 @@ export type {
   SlidingWindowStrategyOptions,
   SummarizationStrategyOptions,
   AnthropicPromptCachingStrategyOptions,
+  AnthropicServerToolEditingOptions,
   ToolResultDecayStrategyOptions,
   ToolResultDecayPressureAnchor,
 } from "./types.js";
