@@ -4,6 +4,85 @@ import type {
   SharedPrefixTracker,
 } from "./types.js";
 
+const HOST_ONLY_MESSAGE_KEYS = new Set([
+  "id",
+  "sourceRecordId",
+  "eventId",
+  "messageId",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeProviderOptions(providerOptions: unknown): unknown {
+  if (!isRecord(providerOptions)) {
+    return undefined;
+  }
+
+  const normalizedEntries = Object.entries(providerOptions)
+    .filter(([key]) => key !== "contextManagement")
+    .map(([key, value]) => [key, normalizeUnknown(value)] as const)
+    .filter(([, value]) => value !== undefined);
+
+  return normalizedEntries.length > 0
+    ? Object.fromEntries(normalizedEntries)
+    : undefined;
+}
+
+function normalizeUnknown(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeUnknown(entry));
+  }
+
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const normalizedEntries = Object.entries(value)
+    .map(([key, entryValue]) => {
+      if (key === "providerOptions") {
+        return [key, normalizeProviderOptions(entryValue)] as const;
+      }
+
+      return [key, normalizeUnknown(entryValue)] as const;
+    })
+    .filter(([, entryValue]) => entryValue !== undefined);
+
+  return Object.fromEntries(normalizedEntries);
+}
+
+function normalizeMessageForSharedPrefix(message: unknown): unknown {
+  if (!isRecord(message)) {
+    return normalizeUnknown(message);
+  }
+
+  const normalizedEntries = Object.entries(message)
+    .filter(([key]) => !HOST_ONLY_MESSAGE_KEYS.has(key))
+    .map(([key, value]) => {
+      if (key === "providerOptions") {
+        return [key, normalizeProviderOptions(value)] as const;
+      }
+
+      if (key === "content") {
+        return [key, normalizeUnknown(value)] as const;
+      }
+
+      return [key, normalizeUnknown(value)] as const;
+    })
+    .filter(([, value]) => value !== undefined);
+
+  return Object.fromEntries(normalizedEntries);
+}
+
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) {
     return JSON.stringify(value);
@@ -28,7 +107,7 @@ function stableSerialize(value: unknown): string {
 }
 
 function fingerprintPrompt(prompt: LanguageModelV3Prompt): string[] {
-  return prompt.map((message) => stableSerialize(message));
+  return prompt.map((message) => stableSerialize(normalizeMessageForSharedPrefix(message)));
 }
 
 class InMemorySharedPrefixTracker implements SharedPrefixTracker {

@@ -81,6 +81,72 @@ describe("createSharedPrefixTracker", () => {
     });
   });
 
+  test("ignores host-only message metadata", () => {
+    const tracker = createSharedPrefixTracker();
+
+    tracker.observe([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Stable reply" }],
+        id: "prompt:1",
+        sourceRecordId: "record:1",
+        eventId: "event:1",
+      },
+    ] as any);
+
+    const result = tracker.observe([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Stable reply" }],
+        id: "prompt:2",
+        sourceRecordId: "record:2",
+        eventId: "event:2",
+      },
+    ] as any);
+
+    expect(result).toEqual({
+      sharedPrefixMessageCount: 1,
+      lastSharedMessageIndex: 0,
+      hasSharedPrefix: true,
+    });
+  });
+
+  test("ignores host-managed contextManagement provider options", () => {
+    const tracker = createSharedPrefixTracker();
+
+    tracker.observe([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Overlay text" }],
+        providerOptions: {
+          contextManagement: {
+            type: "reminder-overlay",
+            reminderId: "first",
+          },
+        },
+      },
+    ]);
+
+    const result = tracker.observe([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Overlay text" }],
+        providerOptions: {
+          contextManagement: {
+            type: "reminder-overlay",
+            reminderId: "second",
+          },
+        },
+      },
+    ]);
+
+    expect(result).toEqual({
+      sharedPrefixMessageCount: 1,
+      lastSharedMessageIndex: 0,
+      hasSharedPrefix: true,
+    });
+  });
+
   test("breaks the prefix when message provider options change", () => {
     const tracker = createSharedPrefixTracker();
 

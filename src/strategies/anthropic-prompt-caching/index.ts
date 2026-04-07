@@ -86,6 +86,36 @@ function withAnthropicSharedPrefixBreakpoint(
   return cloned;
 }
 
+function isEligibleSharedPrefixMessage(message: LanguageModelV3Message): boolean {
+  if (message.role === "system" || message.role === "user") {
+    return true;
+  }
+
+  if (message.role === "tool") {
+    return false;
+  }
+
+  return !message.content.some((part) => part.type === "tool-call" || part.type === "tool-result");
+}
+
+function resolveEligibleSharedPrefixBreakpoint(
+  prompt: readonly LanguageModelV3Message[],
+  lastSharedMessageIndex: number | undefined
+): number | undefined {
+  if (lastSharedMessageIndex === undefined) {
+    return undefined;
+  }
+
+  for (let index = lastSharedMessageIndex; index >= 0; index -= 1) {
+    const message = prompt[index];
+    if (message && isEligibleSharedPrefixMessage(message)) {
+      return index;
+    }
+  }
+
+  return undefined;
+}
+
 export class AnthropicPromptCachingStrategy implements ContextManagementStrategy {
   readonly name = "anthropic-prompt-caching";
   private readonly ttl: "5m" | "1h";
@@ -120,26 +150,35 @@ export class AnthropicPromptCachingStrategy implements ContextManagementStrategy
     }
 
     const observation = this.tracker.observe(state.prompt);
+    const lastEligibleSharedMessageIndex = resolveEligibleSharedPrefixBreakpoint(
+      state.prompt,
+      observation.lastSharedMessageIndex
+    );
+    const sharedPrefixMessageCount = lastEligibleSharedMessageIndex === undefined
+      ? 0
+      : lastEligibleSharedMessageIndex + 1;
+    const hasSharedPrefix = sharedPrefixMessageCount > 0;
+
     state.updatePrompt(
       withAnthropicSharedPrefixBreakpoint(
         state.prompt,
-        observation.lastSharedMessageIndex,
+        lastEligibleSharedMessageIndex,
         this.ttl
       )
     );
 
     return {
-      outcome: observation.hasSharedPrefix || this.clearToolUses ? "applied" : "skipped",
-      reason: observation.hasSharedPrefix
+      outcome: hasSharedPrefix || this.clearToolUses ? "applied" : "skipped",
+      reason: hasSharedPrefix
         ? "shared-prefix-breakpoint-applied"
         : this.clearToolUses
           ? "clear-tool-uses-enabled"
           : "no-shared-prefix",
       payloads: {
         kind: "anthropic-prompt-caching",
-        sharedPrefixMessageCount: observation.sharedPrefixMessageCount,
-        lastSharedMessageIndex: observation.lastSharedMessageIndex,
-        breakpointApplied: observation.hasSharedPrefix,
+        sharedPrefixMessageCount,
+        lastSharedMessageIndex: lastEligibleSharedMessageIndex,
+        breakpointApplied: hasSharedPrefix,
         clearToolUsesEnabled: this.clearToolUses,
       },
     };
