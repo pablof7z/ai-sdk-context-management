@@ -37,17 +37,20 @@ export interface ContextManagementReminder {
   disposition?: "queue" | "defer";
   placement?: ReminderPlacement;
   deliveryMode?: "stateful" | "transient";
+  persistInHistory?: boolean;
 }
 
 export interface ReminderDescriptor {
   type: string;
   content: string;
   attributes?: Record<string, string>;
+  persistInHistory?: boolean;
 }
 
 export interface ReminderRuntimeOverlay {
   overlayType: string;
   message: ModelMessage;
+  persistInHistory?: boolean;
 }
 
 export interface ReminderStateStoreKey {

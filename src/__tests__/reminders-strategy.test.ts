@@ -65,7 +65,7 @@ describe("RemindersStrategy", () => {
     );
   });
 
-  test("returns overlay runtime messages while merging dynamic reminders into the latest user turn", async () => {
+  test("returns overlay runtime messages as a trailing overlay message", async () => {
     const provider: ReminderProvider<{ reminder: string }, string> = {
       type: "todo-list",
       placement: "overlay-user",
@@ -94,9 +94,41 @@ describe("RemindersStrategy", () => {
 
     expect(prepared.runtimeOverlays).toHaveLength(1);
     expect(prepared.runtimeOverlays?.[0]?.overlayType).toBe("system-reminders");
-    expect(prepared.messages).toHaveLength(makePrompt().length);
-    expect(JSON.stringify(prepared.messages.at(-1))).toContain("latest user");
+    expect(prepared.runtimeOverlays?.[0]?.persistInHistory).toBe(true);
+    expect(prepared.messages).toHaveLength(makePrompt().length + 1);
+    expect(JSON.stringify(prepared.messages.at(-2))).toContain("latest user");
+    expect(JSON.stringify(prepared.messages.at(-2))).not.toContain("Check the pending todo list.");
     expect(JSON.stringify(prepared.messages.at(-1))).toContain("Check the pending todo list.");
+  });
+
+  test("keeps non-persisted overlay reminders out of persistent runtime overlays", async () => {
+    const emittingStrategy: ContextManagementStrategy = {
+      name: "emitter",
+      apply: async (state) => {
+        await state.emitReminder({
+          kind: "supervision-correction",
+          content: "Fix the last tool call before continuing.",
+          placement: "overlay-user",
+          persistInHistory: false,
+        });
+      },
+    };
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        emittingStrategy,
+        new RemindersStrategy(),
+      ],
+    });
+
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: makePrompt(),
+    });
+
+    expect(prepared.messages).toHaveLength(makePrompt().length + 1);
+    expect(prepared.runtimeOverlays).toHaveLength(1);
+    expect(prepared.runtimeOverlays?.[0]?.persistInHistory).toBe(false);
+    expect(JSON.stringify(prepared.messages.at(-1))).toContain("Fix the last tool call before continuing.");
   });
 
   test("skips unchanged stateful reminders emitted by earlier strategies on later turns", async () => {

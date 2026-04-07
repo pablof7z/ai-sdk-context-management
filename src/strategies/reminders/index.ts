@@ -95,6 +95,9 @@ function toDescriptor(reminder: ContextManagementReminder): ReminderDescriptor {
     type: reminder.kind,
     content: reminder.content,
     ...(reminder.attributes ? { attributes: reminder.attributes } : {}),
+    ...(reminder.persistInHistory !== undefined
+      ? { persistInHistory: reminder.persistInHistory }
+      : {}),
   };
 }
 
@@ -287,6 +290,49 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
         ),
       };
     }
+  }
+
+  private appendOverlayMessages(
+    state: ContextManagementStrategyState,
+    prompt: ReturnType<typeof clonePrompt>,
+    overlays: ReminderDescriptor[]
+  ): ReturnType<typeof clonePrompt> {
+    if (overlays.length === 0) {
+      return prompt;
+    }
+
+    const groups = [
+      {
+        persistInHistory: true,
+        reminders: overlays.filter((descriptor) => descriptor.persistInHistory !== false),
+      },
+      {
+        persistInHistory: false,
+        reminders: overlays.filter((descriptor) => descriptor.persistInHistory === false),
+      },
+    ].filter((group) => group.reminders.length > 0);
+
+    let nextPrompt = clonePrompt(prompt);
+
+    for (const group of groups) {
+      const overlayXml = combineSystemReminders(group.reminders);
+      if (overlayXml.length === 0) {
+        continue;
+      }
+
+      const overlayMessage = buildContextManagementUserOverlayMessage(overlayXml, {
+        type: "reminder-overlay",
+        overlayType: this.overlayType,
+      });
+      nextPrompt = [...nextPrompt, overlayMessage];
+      state.addRuntimeOverlay({
+        overlayType: this.overlayType,
+        message: overlayMessage,
+        persistInHistory: group.persistInHistory,
+      });
+    }
+
+    return nextPrompt;
   }
 
   private async loadReminderState(
@@ -585,25 +631,20 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
       );
     }
 
-    const dynamicUserXml = combineSystemReminders([
-      ...latestUserReminders,
-      ...overlayReminders,
-    ]);
-    if (dynamicUserXml.length > 0) {
-      const overlayMessage = buildContextManagementUserOverlayMessage(dynamicUserXml, {
-        type: "reminder-overlay",
-        overlayType: this.overlayType,
-      });
+    const latestUserXml = combineSystemReminders(latestUserReminders);
+    if (latestUserXml.length > 0) {
       if (nextPrompt.some((message) => message.role === "user")) {
-        nextPrompt = appendReminderToLatestUserMessage(nextPrompt, dynamicUserXml);
+        nextPrompt = appendReminderToLatestUserMessage(nextPrompt, latestUserXml);
       } else {
-        nextPrompt = [...nextPrompt, overlayMessage];
+        nextPrompt = insertSystemMessageAfterLeadingSystemMessages(
+          nextPrompt,
+          latestUserXml,
+          "latest-user-append"
+        );
       }
-      state.addRuntimeOverlay({
-        overlayType: this.overlayType,
-        message: overlayMessage,
-      });
     }
+
+    nextPrompt = this.appendOverlayMessages(state, nextPrompt, overlayReminders);
 
     state.updatePrompt(nextPrompt);
 
