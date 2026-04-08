@@ -50,17 +50,21 @@ function buildReminderBlock(options: {
     forced,
   } = options;
 
-  const lines = [
-    `Your scratchpad (${currentContext.agentLabel ?? currentContext.agentId}):`,
-    ...renderScratchpadState(currentState),
-  ];
+  const currentLines = renderScratchpadState(currentState);
+  const currentIsEmpty = currentLines.length === 0;
+
+  const lines: string[] = [];
+  if (!currentIsEmpty) {
+    lines.push(`Your scratchpad (${currentContext.agentLabel ?? currentContext.agentId}):`);
+    lines.push(...currentLines);
+  }
 
   const otherAgentNotes = otherScratchpads
     .map((entry) => ({
       agentLabel: entry.agentLabel ?? entry.state.agentLabel ?? entry.agentId,
       body: renderScratchpadState(normalizeScratchpadState(entry.state)),
     }))
-    .filter((entry) => entry.body.length > 0 && !(entry.body.length === 1 && entry.body[0] === "(empty)"));
+    .filter((entry) => entry.body.length > 0);
 
   if (otherAgentNotes.length > 0) {
     lines.push("Other agent scratchpads:");
@@ -95,7 +99,7 @@ function hasScratchpadState(state: ScratchpadState): boolean {
 function hasVisibleOtherScratchpads(entries: ScratchpadConversationEntry[]): boolean {
   return entries.some((entry) => {
     const body = renderScratchpadState(normalizeScratchpadState(entry.state));
-    return body.length > 0 && !(body.length === 1 && body[0] === "(empty)");
+    return body.length > 0;
   });
 }
 
@@ -197,10 +201,12 @@ export class ScratchpadStrategy implements ContextManagementStrategy {
         forced: shouldForceToolChoice,
       });
 
-      await state.emitReminder({
-        kind: "scratchpad",
-        content: reminderBlock,
-      });
+      if (reminderBlock.length > 0) {
+        await state.emitReminder({
+          kind: "scratchpad",
+          content: reminderBlock,
+        });
+      }
     }
 
     if (shouldForceToolChoice) {

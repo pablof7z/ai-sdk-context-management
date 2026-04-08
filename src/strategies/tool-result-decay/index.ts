@@ -16,11 +16,18 @@ const DEFAULT_PLACEHOLDER_MIN_SOURCE_TOKENS = 800;
 const DEFAULT_MIN_PLACEHOLDER_BATCH_SIZE = 10;
 const DEFAULT_PLACEHOLDER = "[result omitted]";
 const DEFAULT_WARNING_FORECAST_EXTRA_TOKENS = 10_000;
+const DEFAULT_MIN_TOTAL_SAVINGS_TOKENS = 0;
+const DEFAULT_MIN_DEPTH = 0;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_PRESSURE_ANCHORS: readonly ToolResultDecayPressureAnchor[] = [
   { toolTokens: 100, depthFactor: 0.05 },
   { toolTokens: 5_000, depthFactor: 1 },
   { toolTokens: 50_000, depthFactor: 5 },
+];
+const DEFAULT_SINGLE_TOOL_PRESSURE_ANCHORS: readonly ToolResultDecayPressureAnchor[] = [
+  { toolTokens: 50_000, depthFactor: 0.01 },   // < 50k: use global pressure only
+  { toolTokens: 100_000, depthFactor: 10 },    // 100k: decay aggressively
+  { toolTokens: 500_000, depthFactor: 50 },    // 500k+: decay immediately
 ];
 
 type DecayAction = { type: "full" } | { type: "placeholder" };
@@ -65,7 +72,7 @@ export function estimateOutputChars(output: LanguageModelV3ToolResultOutput): nu
 }
 
 function normalizePressureAnchors(
-  anchors?: ToolResultDecayPressureAnchor[]
+  anchors?: ToolResultDecayPressureAnchor[] | readonly ToolResultDecayPressureAnchor[]
 ): ToolResultDecayPressureAnchor[] {
   const source = anchors?.length ? anchors : DEFAULT_PRESSURE_ANCHORS;
   const byToolTokens = new Map<number, number>();
@@ -213,7 +220,11 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
   private readonly decayInputs: boolean;
   private readonly estimator;
   private readonly pressureAnchors: ToolResultDecayPressureAnchor[];
+  private readonly singleToolPressureAnchors: ToolResultDecayPressureAnchor[];
   private readonly warningForecastExtraTokens: number;
+  private readonly minTotalSavingsTokens: number;
+  private readonly excludeToolNames: Set<string>;
+  private readonly minDepth: number;
 
   constructor(options: ToolResultDecayStrategyOptions = {}) {
     this.maxResultTokens = Math.max(0, Math.floor(options.maxResultTokens ?? DEFAULT_MAX_RESULT_TOKENS));
@@ -229,10 +240,17 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     this.decayInputs = options.decayInputs ?? true;
     this.estimator = options.estimator ?? createDefaultPromptTokenEstimator();
     this.pressureAnchors = normalizePressureAnchors(options.pressureAnchors);
+    this.singleToolPressureAnchors = normalizePressureAnchors(options.singleToolPressureAnchors ?? DEFAULT_SINGLE_TOOL_PRESSURE_ANCHORS);
     this.warningForecastExtraTokens = Math.max(
       0,
       Math.floor(options.warningForecastExtraTokens ?? DEFAULT_WARNING_FORECAST_EXTRA_TOKENS)
     );
+    this.minTotalSavingsTokens = Math.max(
+      0,
+      Math.floor(options.minTotalSavingsTokens ?? DEFAULT_MIN_TOTAL_SAVINGS_TOKENS)
+    );
+    this.excludeToolNames = new Set(options.excludeToolNames ?? []);
+    this.minDepth = Math.max(0, Math.floor(options.minDepth ?? DEFAULT_MIN_DEPTH));
   }
 
   async apply(state: ContextManagementStrategyState): Promise<ContextManagementStrategyExecution> {
@@ -251,6 +269,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
           placeholderMinSourceTokens: this.placeholderMinSourceTokens,
           minPlaceholderBatchSize: this.minPlaceholderBatchSize,
           pressureAnchors: this.pressureAnchors.map((anchor) => ({ ...anchor })),
+          singleToolPressureAnchors: this.singleToolPressureAnchors.map((anchor) => ({ ...anchor })),
           warningForecastExtraTokens: this.warningForecastExtraTokens,
         },
       };
@@ -303,9 +322,9 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
     }
 
     const toolContextTokens = estimateToolContextTokens(charEstimates, inputCharEstimates);
-    const depthFactor = interpolateDepthFactor(this.pressureAnchors, toolContextTokens);
+    const globalDepthFactor = interpolateDepthFactor(this.pressureAnchors, toolContextTokens);
     const forecastToolContextTokens = toolContextTokens + this.warningForecastExtraTokens;
-    const forecastDepthFactor = interpolateDepthFactor(this.pressureAnchors, forecastToolContextTokens);
+    const forecastGlobalDepthFactor = interpolateDepthFactor(this.pressureAnchors, forecastToolContextTokens);
 
     const actions = new Map<string, DecayAction>();
     const placeholderCandidateIds: string[] = [];
@@ -315,11 +334,26 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         continue;
       }
 
+      if (this.excludeToolNames.has(exchange.toolName)) {
+        actions.set(exchange.toolCallId, { type: "full" });
+        continue;
+      }
+
       const depth = depthMap.get(exchange.toolCallId)!;
       const estimatedChars = charEstimates.get(exchange.toolCallId) ?? 0;
+      const estimatedTokens = Math.ceil(estimatedChars / CHARS_PER_TOKEN);
+      const singleToolDepthFactor = interpolateDepthFactor(this.singleToolPressureAnchors, estimatedTokens);
+      const effectiveDepthFactor = Math.max(globalDepthFactor, singleToolDepthFactor);
+
+      // Recency protection: don't decay recent tools unless single-tool pressure is very high
+      if (depth < this.minDepth && singleToolDepthFactor < 5) {
+        actions.set(exchange.toolCallId, { type: "full" });
+        continue;
+      }
+
       actions.set(
         exchange.toolCallId,
-        classifyExchange(depth, estimatedChars, baseMaxChars, placeholderMinSourceChars, depthFactor)
+        classifyExchange(depth, estimatedChars, baseMaxChars, placeholderMinSourceChars, effectiveDepthFactor)
       );
 
       if (actions.get(exchange.toolCallId)?.type === "placeholder") {
@@ -338,11 +372,26 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
           continue;
         }
 
+        if (this.excludeToolNames.has(exchange.toolName)) {
+          inputActions.set(exchange.toolCallId, { type: "full" });
+          continue;
+        }
+
         const depth = depthMap.get(exchange.toolCallId)!;
         const estimatedChars = inputCharEstimates.get(exchange.toolCallId) ?? 0;
+        const estimatedTokens = Math.ceil(estimatedChars / CHARS_PER_TOKEN);
+        const singleToolDepthFactor = interpolateDepthFactor(this.singleToolPressureAnchors, estimatedTokens);
+        const effectiveDepthFactor = Math.max(globalDepthFactor, singleToolDepthFactor);
+
+        // Recency protection for inputs too
+        if (depth < this.minDepth && singleToolDepthFactor < 5) {
+          inputActions.set(exchange.toolCallId, { type: "full" });
+          continue;
+        }
+
         inputActions.set(
           exchange.toolCallId,
-          classifyExchange(depth, estimatedChars, baseMaxChars, placeholderMinSourceChars, depthFactor)
+          classifyExchange(depth, estimatedChars, baseMaxChars, placeholderMinSourceChars, effectiveDepthFactor)
         );
 
         if (inputActions.get(exchange.toolCallId)?.type === "placeholder") {
@@ -362,13 +411,16 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
 
       const depth = depthMap.get(exchange.toolCallId)!;
       const estimatedChars = charEstimates.get(exchange.toolCallId) ?? 0;
+      const estimatedTokens = Math.ceil(estimatedChars / CHARS_PER_TOKEN);
+      const forecastSingleToolDepthFactor = interpolateDepthFactor(this.singleToolPressureAnchors, estimatedTokens);
+      const forecastEffectiveDepthFactor = Math.max(forecastGlobalDepthFactor, forecastSingleToolDepthFactor);
       const currentAction = actions.get(exchange.toolCallId)!;
       const forecastAction = classifyExchange(
         depth + 1,
         estimatedChars,
         baseMaxChars,
         placeholderMinSourceChars,
-        forecastDepthFactor
+        forecastEffectiveDepthFactor
       );
 
       if (!isForecastWorse(currentAction, forecastAction)) {
@@ -399,6 +451,9 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       .map((exchange) => {
         const depth = depthMap.get(exchange.toolCallId)!;
         const estimatedChars = charEstimates.get(exchange.toolCallId) ?? 0;
+        const estimatedTokens = Math.ceil(estimatedChars / CHARS_PER_TOKEN);
+        const forecastSingleToolDepthFactor = interpolateDepthFactor(this.singleToolPressureAnchors, estimatedTokens);
+        const forecastEffectiveDepthFactor = Math.max(forecastGlobalDepthFactor, forecastSingleToolDepthFactor);
         return {
           toolCallId: exchange.toolCallId,
           toolName: exchange.toolName,
@@ -411,7 +466,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
             estimatedChars,
             baseMaxChars,
             placeholderMinSourceChars,
-            forecastDepthFactor
+            forecastEffectiveDepthFactor
           ),
         } satisfies AtRiskExchange;
       });
@@ -421,9 +476,12 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       && warningExchanges.length > 0;
 
     let placeholderCount = 0;
+    let totalSavingsChars = 0;
     for (const toolCallId of placeholderCandidateIds) {
       if (placeholderBatchIds.has(toolCallId)) {
         placeholderCount++;
+        const savedChars = charEstimates.get(toolCallId) ?? 0;
+        totalSavingsChars += savedChars;
       }
     }
 
@@ -432,13 +490,18 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       for (const toolCallId of inputPlaceholderCandidateIds) {
         if (inputPlaceholderBatchIds.has(toolCallId)) {
           inputPlaceholderCount++;
+          const savedChars = inputCharEstimates.get(toolCallId) ?? 0;
+          totalSavingsChars += savedChars;
         }
       }
     }
 
+    const totalSavingsTokens = Math.ceil(totalSavingsChars / CHARS_PER_TOKEN);
+    const meetsMinSavingsThreshold = totalSavingsTokens >= this.minTotalSavingsTokens;
+
     const warningToolCallIds = warningExchanges.map((entry) => entry.toolCallId);
     const warningPlaceholderIds = warningExchanges.map((entry) => entry.toolCallId);
-    const hasMutations = placeholderCount > 0 || inputPlaceholderCount > 0;
+    const hasMutations = (placeholderCount > 0 || inputPlaceholderCount > 0) && meetsMinSavingsThreshold;
 
     if (!hasMutations) {
       if (shouldEmitThresholdWarning) {
@@ -446,17 +509,19 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
       }
 
       return {
-        reason: "tool-results-decayed",
+        reason: meetsMinSavingsThreshold ? "tool-results-decayed" : "min-savings-threshold-not-met",
         payloads: {
           kind: "tool-result-decay",
           currentPromptTokens,
           toolContextTokens,
-          depthFactor,
+          depthFactor: globalDepthFactor,
           forecastToolContextTokens,
-          forecastDepthFactor,
+          forecastDepthFactor: forecastGlobalDepthFactor,
           maxResultTokens: this.maxResultTokens,
           placeholderMinSourceTokens: this.placeholderMinSourceTokens,
           minPlaceholderBatchSize: this.minPlaceholderBatchSize,
+          minTotalSavingsTokens: this.minTotalSavingsTokens,
+          totalSavingsTokens,
           placeholderCount: 0,
           inputPlaceholderCount: 0,
           totalToolExchanges: exchanges.size,
@@ -465,6 +530,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
           warningToolCallIds,
           warningPlaceholderIds,
           pressureAnchors: this.pressureAnchors.map((anchor) => ({ ...anchor })),
+          singleToolPressureAnchors: this.singleToolPressureAnchors.map((anchor) => ({ ...anchor })),
         },
       };
     }
@@ -526,12 +592,14 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         kind: "tool-result-decay",
         currentPromptTokens,
         toolContextTokens,
-        depthFactor,
+        depthFactor: globalDepthFactor,
         forecastToolContextTokens,
-        forecastDepthFactor,
+        forecastDepthFactor: forecastGlobalDepthFactor,
         maxResultTokens: this.maxResultTokens,
         placeholderMinSourceTokens: this.placeholderMinSourceTokens,
         minPlaceholderBatchSize: this.minPlaceholderBatchSize,
+        minTotalSavingsTokens: this.minTotalSavingsTokens,
+        totalSavingsTokens,
         placeholderCount,
         inputPlaceholderCount,
         totalToolExchanges: exchanges.size,
@@ -540,6 +608,7 @@ export class ToolResultDecayStrategy implements ContextManagementStrategy {
         warningToolCallIds,
         warningPlaceholderIds,
         pressureAnchors: this.pressureAnchors.map((anchor) => ({ ...anchor })),
+        singleToolPressureAnchors: this.singleToolPressureAnchors.map((anchor) => ({ ...anchor })),
       },
     };
   }

@@ -5,11 +5,16 @@ export declare class ToolResultDecayStrategy implements ContextManagementStrateg
     readonly name = "tool-result-decay";
     private readonly maxResultTokens;
     private readonly placeholderMinSourceTokens;
+    private readonly minPlaceholderBatchSize;
     private readonly placeholder;
     private readonly decayInputs;
     private readonly estimator;
     private readonly pressureAnchors;
+    private readonly singleToolPressureAnchors;
     private readonly warningForecastExtraTokens;
+    private readonly minTotalSavingsTokens;
+    private readonly excludeToolNames;
+    private readonly minDepth;
     constructor(options?: ToolResultDecayStrategyOptions);
     apply(state: ContextManagementStrategyState): Promise<ContextManagementStrategyExecution>;
     private emitDecayWarning;

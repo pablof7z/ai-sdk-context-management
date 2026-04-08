@@ -11,16 +11,19 @@ function buildScratchpadKey(context) {
 }
 function buildReminderBlock(options) {
     const { currentState, currentContext, otherScratchpads, emptyStateGuidanceLines, forced, } = options;
-    const lines = [
-        `Your scratchpad (${currentContext.agentLabel ?? currentContext.agentId}):`,
-        ...renderScratchpadState(currentState),
-    ];
+    const currentLines = renderScratchpadState(currentState);
+    const currentIsEmpty = currentLines.length === 0;
+    const lines = [];
+    if (!currentIsEmpty) {
+        lines.push(`Your scratchpad (${currentContext.agentLabel ?? currentContext.agentId}):`);
+        lines.push(...currentLines);
+    }
     const otherAgentNotes = otherScratchpads
         .map((entry) => ({
         agentLabel: entry.agentLabel ?? entry.state.agentLabel ?? entry.agentId,
         body: renderScratchpadState(normalizeScratchpadState(entry.state)),
     }))
-        .filter((entry) => entry.body.length > 0 && !(entry.body.length === 1 && entry.body[0] === "(empty)"));
+        .filter((entry) => entry.body.length > 0);
     if (otherAgentNotes.length > 0) {
         lines.push("Other agent scratchpads:");
         for (const entry of otherAgentNotes) {
@@ -36,6 +39,17 @@ function buildReminderBlock(options) {
         lines.push(...emptyStateGuidanceLines);
     }
     return lines.join("\n");
+}
+function hasScratchpadState(state) {
+    return Object.keys(state.entries ?? {}).length > 0
+        || state.activeNotice !== undefined
+        || typeof state.preserveTurns === "number";
+}
+function hasVisibleOtherScratchpads(entries) {
+    return entries.some((entry) => {
+        const body = renderScratchpadState(normalizeScratchpadState(entry.state));
+        return body.length > 0;
+    });
 }
 export class ScratchpadStrategy {
     name = "scratchpad";
@@ -108,17 +122,25 @@ export class ScratchpadStrategy {
             && estimatedTokens >= forceThresholdTokens
             && !alreadyForcedToScratchpad
             && !justCalledScratchpad;
-        const reminderBlock = buildReminderBlock({
-            currentState,
-            currentContext: state.requestContext,
-            otherScratchpads: allScratchpads,
-            emptyStateGuidanceLines: this.emptyStateGuidanceLines,
-            forced: shouldForceToolChoice,
-        });
-        await state.emitReminder({
-            kind: "scratchpad",
-            content: reminderBlock,
-        });
+        const shouldRenderReminder = shouldForceToolChoice
+            || hasScratchpadState(currentState)
+            || hasVisibleOtherScratchpads(allScratchpads)
+            || this.emptyStateGuidanceLines.length > 0;
+        if (shouldRenderReminder) {
+            const reminderBlock = buildReminderBlock({
+                currentState,
+                currentContext: state.requestContext,
+                otherScratchpads: allScratchpads,
+                emptyStateGuidanceLines: this.emptyStateGuidanceLines,
+                forced: shouldForceToolChoice,
+            });
+            if (reminderBlock.length > 0) {
+                await state.emitReminder({
+                    kind: "scratchpad",
+                    content: reminderBlock,
+                });
+            }
+        }
         if (shouldForceToolChoice) {
             this.forcedOnLastApply = true;
             state.updateParams({
@@ -129,10 +151,16 @@ export class ScratchpadStrategy {
             });
         }
         return {
-            outcome: shouldForceToolChoice ? "applied" : undefined,
+            outcome: shouldForceToolChoice
+                ? "applied"
+                : shouldRenderReminder
+                    ? undefined
+                    : "skipped",
             reason: shouldForceToolChoice
                 ? "scratchpad-rendered-and-tool-forced"
-                : "scratchpad-rendered",
+                : shouldRenderReminder
+                    ? "scratchpad-rendered"
+                    : "scratchpad-idle",
             ...(this.budgetProfile !== undefined ? { workingTokenBudget: this.budgetProfile.tokenBudget } : {}),
             payloads: {
                 kind: "scratchpad",

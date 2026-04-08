@@ -342,7 +342,11 @@ export interface ToolResultDecayStrategyOptions {
   decayInputs?: boolean;
   estimator?: PromptTokenEstimator;
   pressureAnchors?: ToolResultDecayPressureAnchor[];
+  singleToolPressureAnchors?: ToolResultDecayPressureAnchor[];
   warningForecastExtraTokens?: number;
+  minTotalSavingsTokens?: number;
+  excludeToolNames?: string[];
+  minDepth?: number;
 }
 
 export interface ReminderContextUtilizationSourceOptions {
@@ -571,7 +575,10 @@ export interface ToolResultDecayStrategyPayload {
   placeholderMinSourceTokens: number;
   minPlaceholderBatchSize: number;
   pressureAnchors: ToolResultDecayPressureAnchor[];
+  singleToolPressureAnchors?: ToolResultDecayPressureAnchor[];
   warningForecastExtraTokens: number;
+  minTotalSavingsTokens?: number;
+  totalSavingsTokens?: number;
   toolContextTokens?: number;
   depthFactor?: number;
   forecastToolContextTokens?: number;

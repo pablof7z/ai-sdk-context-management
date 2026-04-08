@@ -126,6 +126,9 @@ function latestUserReminderText(prompt: LanguageModelV3Prompt): string {
 }
 
 function userWithScratchpad(text: string, ...scratchpadLines: string[]): string {
+  if (scratchpadLines.length === 0) {
+    return `user:${text}`;
+  }
   return `user:${text}\n\nYour scratchpad (Alpha):\n${scratchpadLines.join("\n")}`;
 }
 
@@ -512,7 +515,7 @@ describe("ScratchpadStrategy", () => {
       "user:1",
       "assistant:ok, 1",
       "assistant:<system-reminder>[scratchpad used: Compacting around tool work]</system-reminder>",
-      userWithScratchpad("4", "(empty)"),
+      "user:4",
       "assistant:about to inspect 4",
       "assistant:ok, 4",
     ]);
@@ -580,7 +583,7 @@ describe("ScratchpadStrategy", () => {
       "user:1",
       "assistant:ok, 1",
       "assistant:<system-reminder>[scratchpad used: Compacting earlier work]</system-reminder>",
-      userWithScratchpad("4", "(empty)"),
+      "user:4",
       "assistant:ok, 4",
     ]);
     expect(state.prompt.some((message) => message.role === "tool")).toBe(false);
@@ -635,7 +638,7 @@ describe("ScratchpadStrategy", () => {
       "assistant:ok, 4",
       "user:5",
       "assistant:ok, 5",
-      userWithScratchpad("6", "(empty)"),
+      "user:6",
       "assistant:ok, 6",
     ]);
   });
@@ -676,7 +679,7 @@ describe("ScratchpadStrategy", () => {
       "user:1",
       "assistant:ok, 1",
       "assistant:<system-reminder>[scratchpad used: Fresher scratchpad state]</system-reminder>",
-      userWithScratchpad("6", "(empty)"),
+      "user:6",
       "assistant:ok, 6",
     ]);
     expect(JSON.stringify(state.prompt)).not.toContain("[scratchpad used: stale]");
@@ -712,7 +715,7 @@ describe("ScratchpadStrategy", () => {
     expect(visibleSequence(state.prompt)).toEqual([
       "system:You are helpful.",
       "assistant:<system-reminder>[scratchpad used: Dropping answered turns]</system-reminder>",
-      userWithScratchpad("3", "(empty)"),
+      "user:3",
     ]);
   });
 

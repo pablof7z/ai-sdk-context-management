@@ -92,8 +92,7 @@ export function renderScratchpadState(state) {
     const entries = state.entries ?? {};
     const entryItems = Object.entries(entries);
     if (entryItems.length === 0) {
-        lines.push("(empty)");
-        return lines;
+        return [];
     }
     for (const [key, value] of entryItems) {
         if (value.includes("\n")) {

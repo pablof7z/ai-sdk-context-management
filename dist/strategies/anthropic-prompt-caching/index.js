@@ -11,7 +11,58 @@ const ANTHROPIC_CLEAR_TOOL_USES_EDIT = {
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function withAnthropicClearToolUses(providerOptions) {
+function normalizeInteger(value, fallback, minimum) {
+    return typeof value === "number" && Number.isFinite(value)
+        ? Math.max(minimum, Math.floor(value))
+        : fallback;
+}
+function normalizeToolList(value, fallback) {
+    if (!Array.isArray(value)) {
+        return [...fallback];
+    }
+    const normalized = value
+        .flatMap((entry) => (typeof entry === "string" ? [entry.trim()] : []))
+        .filter((entry) => entry.length > 0);
+    return normalized.length > 0 ? [...new Set(normalized)] : [...fallback];
+}
+function normalizeAnthropicServerToolEditing(options) {
+    const rawServerToolEditing = options.serverToolEditing;
+    const rawConfig = isRecord(rawServerToolEditing) ? rawServerToolEditing : {};
+    let enabled = options.clearToolUses !== false;
+    if (rawServerToolEditing === false) {
+        enabled = false;
+    }
+    else if (rawServerToolEditing === true) {
+        enabled = true;
+    }
+    else if (typeof rawConfig.enabled === "boolean") {
+        enabled = rawConfig.enabled;
+    }
+    return {
+        enabled,
+        triggerToolUses: normalizeInteger(rawConfig.triggerToolUses, ANTHROPIC_CLEAR_TOOL_USES_EDIT.trigger.value, 1),
+        keepToolUses: normalizeInteger(rawConfig.keepToolUses, ANTHROPIC_CLEAR_TOOL_USES_EDIT.keep.value, 0),
+        clearAtLeastInputTokens: normalizeInteger(rawConfig.clearAtLeastInputTokens, ANTHROPIC_CLEAR_TOOL_USES_EDIT.clearAtLeast.value, 0),
+        clearToolInputs: typeof rawConfig.clearToolInputs === "boolean"
+            ? rawConfig.clearToolInputs
+            : ANTHROPIC_CLEAR_TOOL_USES_EDIT.clearToolInputs,
+        excludeTools: normalizeToolList(rawConfig.excludeTools, ANTHROPIC_CLEAR_TOOL_USES_EDIT.excludeTools),
+    };
+}
+function buildAnthropicClearToolUsesEdit(serverToolEditing) {
+    return {
+        type: ANTHROPIC_CLEAR_TOOL_USES_EDIT.type,
+        trigger: { type: "tool_uses", value: serverToolEditing.triggerToolUses },
+        keep: { type: "tool_uses", value: serverToolEditing.keepToolUses },
+        clearAtLeast: {
+            type: "input_tokens",
+            value: serverToolEditing.clearAtLeastInputTokens,
+        },
+        clearToolInputs: serverToolEditing.clearToolInputs,
+        excludeTools: serverToolEditing.excludeTools,
+    };
+}
+function withAnthropicClearToolUses(providerOptions, serverToolEditing) {
     const normalizedProviderOptions = isRecord(providerOptions) ? providerOptions : {};
     const anthropicOptions = isRecord(normalizedProviderOptions.anthropic)
         ? normalizedProviderOptions.anthropic
@@ -22,7 +73,8 @@ function withAnthropicClearToolUses(providerOptions) {
     const existingEdits = Array.isArray(contextManagement.edits)
         ? contextManagement.edits
         : [];
-    const hasClearToolUses = existingEdits.some((edit) => isRecord(edit) && edit.type === ANTHROPIC_CLEAR_TOOL_USES_EDIT.type);
+    const clearToolUsesEdit = buildAnthropicClearToolUsesEdit(serverToolEditing);
+    const hasClearToolUses = existingEdits.some((edit) => isRecord(edit) && edit.type === clearToolUsesEdit.type);
     return {
         ...normalizedProviderOptions,
         anthropic: {
@@ -31,7 +83,7 @@ function withAnthropicClearToolUses(providerOptions) {
                 ...contextManagement,
                 edits: hasClearToolUses
                     ? existingEdits
-                    : [...existingEdits, ANTHROPIC_CLEAR_TOOL_USES_EDIT],
+                    : [...existingEdits, clearToolUsesEdit],
             },
         },
     };
@@ -81,11 +133,11 @@ function resolveEligibleSharedPrefixBreakpoint(prompt, lastSharedMessageIndex) {
 export class AnthropicPromptCachingStrategy {
     name = "anthropic-prompt-caching";
     ttl;
-    clearToolUses;
+    serverToolEditing;
     tracker = createSharedPrefixTracker();
     constructor(options = {}) {
         this.ttl = options.ttl ?? "1h";
-        this.clearToolUses = options.clearToolUses !== false;
+        this.serverToolEditing = normalizeAnthropicServerToolEditing(options);
     }
     apply(state) {
         if (state.model?.provider !== "anthropic") {
@@ -100,9 +152,9 @@ export class AnthropicPromptCachingStrategy {
                 },
             };
         }
-        if (this.clearToolUses) {
+        if (this.serverToolEditing.enabled) {
             state.updateParams({
-                providerOptions: withAnthropicClearToolUses(state.params.providerOptions),
+                providerOptions: withAnthropicClearToolUses(state.params.providerOptions, this.serverToolEditing),
             });
         }
         const observation = this.tracker.observe(state.prompt);
@@ -113,18 +165,18 @@ export class AnthropicPromptCachingStrategy {
         const hasSharedPrefix = sharedPrefixMessageCount > 0;
         state.updatePrompt(withAnthropicSharedPrefixBreakpoint(state.prompt, lastEligibleSharedMessageIndex, this.ttl));
         return {
-            outcome: hasSharedPrefix || this.clearToolUses ? "applied" : "skipped",
-            reason: hasSharedPrefix
+            outcome: observation.hasSharedPrefix || this.serverToolEditing.enabled ? "applied" : "skipped",
+            reason: observation.hasSharedPrefix
                 ? "shared-prefix-breakpoint-applied"
-                : this.clearToolUses
+                : this.serverToolEditing.enabled
                     ? "clear-tool-uses-enabled"
                     : "no-shared-prefix",
             payloads: {
                 kind: "anthropic-prompt-caching",
-                sharedPrefixMessageCount,
-                lastSharedMessageIndex: lastEligibleSharedMessageIndex,
-                breakpointApplied: hasSharedPrefix,
-                clearToolUsesEnabled: this.clearToolUses,
+                sharedPrefixMessageCount: observation.sharedPrefixMessageCount,
+                lastSharedMessageIndex: observation.lastSharedMessageIndex,
+                breakpointApplied: observation.hasSharedPrefix,
+                clearToolUsesEnabled: this.serverToolEditing.enabled,
             },
         };
     }
