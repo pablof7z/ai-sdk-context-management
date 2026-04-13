@@ -2,7 +2,6 @@ import type { AnthropicPromptCachingStrategyOptions, ContextManagementStrategy, 
 export declare class AnthropicPromptCachingStrategy implements ContextManagementStrategy {
     readonly name = "anthropic-prompt-caching";
     private readonly ttl;
-    private readonly serverToolEditing;
     private readonly tracker;
     constructor(options?: AnthropicPromptCachingStrategyOptions);
     apply(state: ContextManagementStrategyState): ContextManagementStrategyExecution;

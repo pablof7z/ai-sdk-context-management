@@ -373,19 +373,8 @@ export interface RemindersStrategyOptions<TData = unknown> {
   overlayType?: string;
 }
 
-export interface AnthropicServerToolEditingOptions {
-  enabled?: boolean;
-  triggerToolUses?: number;
-  keepToolUses?: number;
-  clearAtLeastInputTokens?: number;
-  clearToolInputs?: boolean;
-  excludeTools?: string[];
-}
-
 export interface AnthropicPromptCachingStrategyOptions {
   ttl?: "5m" | "1h";
-  clearToolUses?: boolean;
-  serverToolEditing?: boolean | AnthropicServerToolEditingOptions;
 }
 
 export interface SummarizationStrategyOptions {
@@ -634,7 +623,6 @@ export interface AnthropicPromptCachingStrategyPayload {
   sharedPrefixMessageCount: number;
   lastSharedMessageIndex?: number;
   breakpointApplied: boolean;
-  clearToolUsesEnabled: boolean;
 }
 
 export interface CompactionToolStrategyPayload {

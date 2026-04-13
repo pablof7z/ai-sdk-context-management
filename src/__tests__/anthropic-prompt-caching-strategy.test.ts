@@ -45,20 +45,7 @@ describe("AnthropicPromptCachingStrategy", () => {
       },
     });
 
-    expect(prepared.providerOptions).toEqual(
-      expect.objectContaining({
-        anthropic: expect.objectContaining({
-          contextManagement: expect.objectContaining({
-            edits: expect.arrayContaining([
-              expect.objectContaining({
-                type: "clear_tool_uses_20250919",
-              }),
-            ]),
-          }),
-        }),
-      })
-    );
-
+    expect(prepared.providerOptions).toBeUndefined();
     expect(prepared.messages[2]?.role).toBe("assistant");
     expect(prepared.messages[2]?.providerOptions).toEqual(
       expect.objectContaining({
@@ -76,9 +63,7 @@ describe("AnthropicPromptCachingStrategy", () => {
   test("backtracks over trailing tool exchanges to the last stable conversational message", async () => {
     const runtime = createContextManagementRuntime({
       strategies: [
-        new AnthropicPromptCachingStrategy({
-          serverToolEditing: false,
-        }),
+        new AnthropicPromptCachingStrategy(),
       ],
     });
 
@@ -154,9 +139,7 @@ describe("AnthropicPromptCachingStrategy", () => {
           ],
           warningForecastExtraTokens: 0,
         }),
-        new AnthropicPromptCachingStrategy({
-          serverToolEditing: false,
-        }),
+        new AnthropicPromptCachingStrategy(),
       ],
     });
 
@@ -236,12 +219,10 @@ describe("AnthropicPromptCachingStrategy", () => {
     });
   });
 
-  test("can disable Anthropic server-side tool editing without disabling shared-prefix caching", async () => {
+  test("keeps request-level provider options untouched while applying shared-prefix caching", async () => {
     const runtime = createContextManagementRuntime({
       strategies: [
-        new AnthropicPromptCachingStrategy({
-          serverToolEditing: false,
-        }),
+        new AnthropicPromptCachingStrategy(),
       ],
     });
 
@@ -286,18 +267,11 @@ describe("AnthropicPromptCachingStrategy", () => {
     );
   });
 
-  test("supports custom Anthropic server-side tool editing knobs", async () => {
+  test("supports custom Anthropic cache TTLs", async () => {
     const runtime = createContextManagementRuntime({
       strategies: [
         new AnthropicPromptCachingStrategy({
           ttl: "5m",
-          serverToolEditing: {
-            triggerToolUses: 40,
-            keepToolUses: 12,
-            clearAtLeastInputTokens: 8000,
-            clearToolInputs: false,
-            excludeTools: ["delegate", "shell"],
-          },
         }),
       ],
     });
@@ -330,24 +304,7 @@ describe("AnthropicPromptCachingStrategy", () => {
       },
     });
 
-    expect(prepared.providerOptions).toEqual(
-      expect.objectContaining({
-        anthropic: expect.objectContaining({
-          contextManagement: expect.objectContaining({
-            edits: expect.arrayContaining([
-              expect.objectContaining({
-                type: "clear_tool_uses_20250919",
-                trigger: { type: "tool_uses", value: 40 },
-                keep: { type: "tool_uses", value: 12 },
-                clearAtLeast: { type: "input_tokens", value: 8000 },
-                clearToolInputs: false,
-                excludeTools: ["delegate", "shell"],
-              }),
-            ]),
-          }),
-        }),
-      })
-    );
+    expect(prepared.providerOptions).toBeUndefined();
     expect(prepared.messages[2]?.providerOptions).toEqual(
       expect.objectContaining({
         anthropic: expect.objectContaining({
