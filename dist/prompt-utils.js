@@ -882,10 +882,17 @@ export function partitionPromptForSummarization(prompt, keepLastMessages, pinned
 }
 export function appendReminderToLatestUserMessage(prompt, reminderText) {
     const cloned = clonePrompt(prompt);
+    if (!canAppendReminderToLatestUserMessage(cloned)) {
+        return cloned;
+    }
     for (let index = cloned.length - 1; index >= 0; index--) {
         const message = cloned[index];
-        if (message.role !== "user") {
+        if (message.role === "system") {
             continue;
+        }
+        if (message.role !== "user"
+            || message.providerOptions?.[CONTEXT_MANAGEMENT_KEY]?.type === "reminder-overlay") {
+            break;
         }
         const content = [...message.content];
         const lastPart = content.at(-1);
@@ -904,7 +911,16 @@ export function appendReminderToLatestUserMessage(prompt, reminderText) {
         };
         return cloned;
     }
-    const insertIndex = cloned.reduce((lastIndex, message, index) => (message.role === "system" ? index : lastIndex), -1) + 1;
-    cloned.splice(insertIndex, 0, buildContextManagementSystemMessage(reminderText));
     return cloned;
+}
+export function canAppendReminderToLatestUserMessage(prompt) {
+    for (let index = prompt.length - 1; index >= 0; index--) {
+        const message = prompt[index];
+        if (message.role === "system") {
+            continue;
+        }
+        return message.role === "user"
+            && message.providerOptions?.[CONTEXT_MANAGEMENT_KEY]?.type !== "reminder-overlay";
+    }
+    return false;
 }

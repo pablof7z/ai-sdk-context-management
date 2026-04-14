@@ -1,5 +1,5 @@
 import { estimateBudgetProfileTokens, normalizeContextBudgetProfile, } from "../../context-budget-profile.js";
-import { appendReminderToLatestUserMessage, buildContextManagementSystemMessage, buildContextManagementUserOverlayMessage, clonePrompt, } from "../../prompt-utils.js";
+import { appendReminderToLatestUserMessage, canAppendReminderToLatestUserMessage, buildContextManagementSystemMessage, buildContextManagementUserOverlayMessage, clonePrompt, } from "../../prompt-utils.js";
 import { combineSystemReminders } from "../../reminders/xml.js";
 const DEFAULT_WARNING_THRESHOLD_RATIO = 0.7;
 const DEFAULT_OVERLAY_TYPE = "system-reminders";
@@ -403,11 +403,11 @@ export class RemindersStrategy {
         }
         const latestUserXml = combineSystemReminders(latestUserReminders);
         if (latestUserXml.length > 0) {
-            if (nextPrompt.some((message) => message.role === "user")) {
+            if (canAppendReminderToLatestUserMessage(nextPrompt)) {
                 nextPrompt = appendReminderToLatestUserMessage(nextPrompt, latestUserXml);
             }
-            else {
-                nextPrompt = insertSystemMessageAfterLeadingSystemMessages(nextPrompt, latestUserXml, "latest-user-append");
+            else if (latestUserReminders.length > 0) {
+                nextPrompt = this.appendOverlayMessages(state, nextPrompt, latestUserReminders);
             }
         }
         nextPrompt = this.appendOverlayMessages(state, nextPrompt, overlayReminders);

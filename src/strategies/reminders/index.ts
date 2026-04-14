@@ -5,6 +5,7 @@ import {
 } from "../../context-budget-profile.js";
 import {
   appendReminderToLatestUserMessage,
+  canAppendReminderToLatestUserMessage,
   buildContextManagementSystemMessage,
   buildContextManagementUserOverlayMessage,
   clonePrompt,
@@ -633,14 +634,10 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
 
     const latestUserXml = combineSystemReminders(latestUserReminders);
     if (latestUserXml.length > 0) {
-      if (nextPrompt.some((message) => message.role === "user")) {
+      if (canAppendReminderToLatestUserMessage(nextPrompt)) {
         nextPrompt = appendReminderToLatestUserMessage(nextPrompt, latestUserXml);
-      } else {
-        nextPrompt = insertSystemMessageAfterLeadingSystemMessages(
-          nextPrompt,
-          latestUserXml,
-          "latest-user-append"
-        );
+      } else if (latestUserReminders.length > 0) {
+        nextPrompt = this.appendOverlayMessages(state, nextPrompt, latestUserReminders);
       }
     }
 

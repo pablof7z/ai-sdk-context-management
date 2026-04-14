@@ -4,6 +4,7 @@ import {
   type ContextManagementStrategy,
   type ReminderProvider,
 } from "../index.js";
+import { buildContextManagementUserOverlayMessage } from "../prompt-utils.js";
 import { makePrompt } from "./helpers.js";
 
 const requestContext = {
@@ -99,6 +100,79 @@ describe("RemindersStrategy", () => {
     expect(JSON.stringify(prepared.messages.at(-2))).toContain("latest user");
     expect(JSON.stringify(prepared.messages.at(-2))).not.toContain("Check the pending todo list.");
     expect(JSON.stringify(prepared.messages.at(-1))).toContain("Check the pending todo list.");
+  });
+
+  test("falls back to an overlay reminder when the latest prompt message is no longer a user turn", async () => {
+    const provider: ReminderProvider<{ reminder: string }, string> = {
+      type: "todo-list",
+      placement: "latest-user-append",
+      snapshot: async (data) => data?.reminder ?? "",
+      renderFull: async (snapshot) =>
+        snapshot.length > 0
+          ? { type: "todo-list", content: snapshot }
+          : null,
+    };
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        new RemindersStrategy({
+          providers: [provider],
+        }),
+      ],
+    });
+
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: [
+        ...makePrompt(),
+        { role: "assistant", content: [{ type: "text", text: "latest assistant" }] },
+      ],
+      reminderData: {
+        reminder: "Do not rewrite an older user turn.",
+      },
+    });
+
+    expect(prepared.runtimeOverlays).toHaveLength(1);
+    expect(prepared.runtimeOverlays?.[0]?.persistInHistory).toBe(true);
+    expect(JSON.stringify(prepared.messages.at(-1))).toContain("Do not rewrite an older user turn.");
+    expect(JSON.stringify(prepared.messages)).toContain("latest user");
+    expect(JSON.stringify(prepared.messages)).toContain("latest assistant");
+    expect(JSON.stringify(prepared.messages)).not.toContain("latest user\\n\\nDo not rewrite an older user turn.");
+  });
+
+  test("does not append onto a trailing reminder overlay user message", async () => {
+    const provider: ReminderProvider<{ reminder: string }, string> = {
+      type: "todo-list",
+      placement: "latest-user-append",
+      snapshot: async (data) => data?.reminder ?? "",
+      renderFull: async (snapshot) =>
+        snapshot.length > 0
+          ? { type: "todo-list", content: snapshot }
+          : null,
+    };
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        new RemindersStrategy({
+          providers: [provider],
+        }),
+      ],
+    });
+
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: [
+        ...makePrompt(),
+        buildContextManagementUserOverlayMessage("Existing overlay reminder."),
+      ],
+      reminderData: {
+        reminder: "Do not chain onto overlay reminders.",
+      },
+    });
+
+    expect(prepared.runtimeOverlays).toHaveLength(1);
+    expect(prepared.runtimeOverlays?.[0]?.persistInHistory).toBe(true);
+    expect(JSON.stringify(prepared.messages.at(-1))).toContain("Do not chain onto overlay reminders.");
+    expect(JSON.stringify(prepared.messages[prepared.messages.length - 2])).toContain("Existing overlay reminder.");
+    expect(JSON.stringify(prepared.messages[prepared.messages.length - 2])).not.toContain("Do not chain onto overlay reminders.");
   });
 
   test("keeps non-persisted overlay reminders out of persistent runtime overlays", async () => {

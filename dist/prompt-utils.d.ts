@@ -64,4 +64,5 @@ export declare function partitionPromptForSummarization(prompt: LanguageModelV3P
     preservedMessages: LanguageModelV3Message[];
 };
 export declare function appendReminderToLatestUserMessage(prompt: LanguageModelV3Prompt, reminderText: string): LanguageModelV3Prompt;
+export declare function canAppendReminderToLatestUserMessage(prompt: LanguageModelV3Prompt): boolean;
 export {};
