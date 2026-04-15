@@ -6,7 +6,7 @@ const DEFAULT_OVERLAY_TYPE = "system-reminders";
 const VALID_REMINDER_PLACEMENTS = [
     "overlay-user",
     "latest-user-append",
-    "fallback-system",
+    "system-append",
 ];
 const CONTEXT_WINDOW_STATUS_THRESHOLD_PERCENT = 50;
 function stableSerialize(value) {
@@ -66,7 +66,7 @@ function validateReminderPlacement(placement, source) {
     switch (placement) {
         case "overlay-user":
         case "latest-user-append":
-        case "fallback-system":
+        case "system-append":
             return placement;
         default:
             throw new Error(`Unsupported reminder placement for ${source}: ${JSON.stringify(placement)}. `
@@ -299,7 +299,7 @@ export class RemindersStrategy {
         reminderState.deferred = [];
         const overlayReminders = [];
         const latestUserReminders = [];
-        const fallbackSystemReminders = [];
+        const systemAppendedReminders = [];
         const reminderTypes = new Set();
         const enqueueDescriptor = (descriptor, placement) => {
             if (descriptor.content.trim().length === 0 || descriptor.type.trim().length === 0) {
@@ -310,8 +310,8 @@ export class RemindersStrategy {
                 case "overlay-user":
                     overlayReminders.push(descriptor);
                     break;
-                case "fallback-system":
-                    fallbackSystemReminders.push(descriptor);
+                case "system-append":
+                    systemAppendedReminders.push(descriptor);
                     break;
                 case "latest-user-append":
                 default:
@@ -397,9 +397,9 @@ export class RemindersStrategy {
         }
         await this.saveReminderState(storeKey, reminderState);
         let nextPrompt = clonePrompt(state.prompt);
-        const fallbackSystemXml = combineSystemReminders(fallbackSystemReminders);
-        if (fallbackSystemXml.length > 0) {
-            nextPrompt = insertSystemMessageAfterLeadingSystemMessages(nextPrompt, fallbackSystemXml, "fallback-system");
+        const systemAppendedXml = combineSystemReminders(systemAppendedReminders);
+        if (systemAppendedXml.length > 0) {
+            nextPrompt = insertSystemMessageAfterLeadingSystemMessages(nextPrompt, systemAppendedXml, "system-append");
         }
         const latestUserXml = combineSystemReminders(latestUserReminders);
         if (latestUserXml.length > 0) {
@@ -414,7 +414,7 @@ export class RemindersStrategy {
         state.updatePrompt(nextPrompt);
         const emittedCount = overlayReminders.length
             + latestUserReminders.length
-            + fallbackSystemReminders.length;
+            + systemAppendedReminders.length;
         return {
             outcome: emittedCount > 0 ? "applied" : "skipped",
             reason: emittedCount > 0 ? "reminders-applied" : "no-reminders",
@@ -426,7 +426,7 @@ export class RemindersStrategy {
                 deferredCount: reminderState.deferred.length,
                 overlayCount: overlayReminders.length,
                 latestUserAppendCount: latestUserReminders.length,
-                fallbackSystemCount: fallbackSystemReminders.length,
+                systemAppendCount: systemAppendedReminders.length,
                 reminderTypes: [...reminderTypes],
             },
         };

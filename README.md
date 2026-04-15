@@ -101,7 +101,7 @@ Per-strategy docs live in [`src/strategies/`](./src/strategies/README.md).
 
 | Strategy | What changes in the prompt | What the agent gets | Docs | Runnable example |
 | --- | --- | --- | --- | --- |
-| `RemindersStrategy` | Owns reminder production, delta tracking, and placement into overlay messages, fallback system blocks, or latest-user appends | One reminder pipeline for host facts, built-in warnings, and provider-aware delivery, including raw context-window status from provider-reported usage | [docs](./src/strategies/reminders/README.md) | [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) |
+| `RemindersStrategy` | Owns reminder production, delta tracking, and placement into overlay messages, system-appended blocks, or latest-user appends | One reminder pipeline for host facts, built-in warnings, and provider-aware delivery, including raw context-window status from provider-reported usage | [docs](./src/strategies/reminders/README.md) | [11-context-utilization-reminder.ts](./examples/11-context-utilization-reminder.ts) |
 | `AnthropicPromptCachingStrategy` | Adds Anthropic cache hints after final prompt assembly | Provider-specific cache breakpointing for naturally stable prompt prefixes | [docs](./src/strategies/anthropic-prompt-caching/README.md) | [06-anthropic-prompt-caching.ts](./examples/06-anthropic-prompt-caching.ts) |
 | `SlidingWindowStrategy` | Keeps the recent tail, can optionally preserve a head, and drops older non-system turns | Bounded context with simple recency bias or setup preservation | [docs](./src/strategies/sliding-window/README.md) | [01-sliding-window.ts](./examples/01-sliding-window.ts) |
 | `ToolResultDecayStrategy` | Leaves recent tool results raw, then replaces older oversized results with placeholders based on depth and total tool-context pressure | Keeps the reasoning chain while continuously hiding stale heavy payloads without waiting for a prompt-budget cliff | [docs](./src/strategies/tool-result-decay/README.md) | [02-tool-result-decay.ts](./examples/02-tool-result-decay.ts) |
@@ -172,7 +172,7 @@ new ToolResultDecayStrategy({
 });
 ```
 
-Warnings are emitted through `RemindersStrategy`, which can place them into overlay messages, fallback system blocks, or latest-user appends depending on policy:
+Warnings are emitted through `RemindersStrategy`, which can place them into overlay messages, system-appended blocks, or latest-user appends depending on policy:
 
 - `tool_call_ids`
 - `placeholder_ids`

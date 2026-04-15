@@ -36,7 +36,7 @@ const DEFAULT_OVERLAY_TYPE = "system-reminders";
 const VALID_REMINDER_PLACEMENTS = [
   "overlay-user",
   "latest-user-append",
-  "fallback-system",
+  "system-append",
 ] satisfies ReminderPlacement[];
 const CONTEXT_WINDOW_STATUS_THRESHOLD_PERCENT = 50;
 
@@ -113,7 +113,7 @@ function validateReminderPlacement(
   switch (placement) {
     case "overlay-user":
     case "latest-user-append":
-    case "fallback-system":
+    case "system-append":
       return placement;
     default:
       throw new Error(
@@ -475,7 +475,7 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
 
     const overlayReminders: ReminderDescriptor[] = [];
     const latestUserReminders: ReminderDescriptor[] = [];
-    const fallbackSystemReminders: ReminderDescriptor[] = [];
+    const systemAppendedReminders: ReminderDescriptor[] = [];
     const reminderTypes = new Set<string>();
 
     const enqueueDescriptor = (descriptor: ReminderDescriptor, placement: ReminderPlacement): void => {
@@ -489,8 +489,8 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
         case "overlay-user":
           overlayReminders.push(descriptor);
           break;
-        case "fallback-system":
-          fallbackSystemReminders.push(descriptor);
+        case "system-append":
+          systemAppendedReminders.push(descriptor);
           break;
         case "latest-user-append":
         default:
@@ -623,12 +623,12 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
 
     let nextPrompt = clonePrompt(state.prompt);
 
-    const fallbackSystemXml = combineSystemReminders(fallbackSystemReminders);
-    if (fallbackSystemXml.length > 0) {
+    const systemAppendedXml = combineSystemReminders(systemAppendedReminders);
+    if (systemAppendedXml.length > 0) {
       nextPrompt = insertSystemMessageAfterLeadingSystemMessages(
         nextPrompt,
-        fallbackSystemXml,
-        "fallback-system"
+        systemAppendedXml,
+        "system-append"
       );
     }
 
@@ -648,7 +648,7 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
     const emittedCount =
       overlayReminders.length
       + latestUserReminders.length
-      + fallbackSystemReminders.length;
+      + systemAppendedReminders.length;
 
     return {
       outcome: emittedCount > 0 ? "applied" : "skipped",
@@ -661,7 +661,7 @@ export class RemindersStrategy<TData = unknown> implements ContextManagementStra
         deferredCount: reminderState.deferred.length,
         overlayCount: overlayReminders.length,
         latestUserAppendCount: latestUserReminders.length,
-        fallbackSystemCount: fallbackSystemReminders.length,
+        systemAppendCount: systemAppendedReminders.length,
         reminderTypes: [...reminderTypes],
       },
     };

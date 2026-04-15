@@ -28,7 +28,7 @@ export interface RemovedToolExchange {
 export type ReminderPlacement =
   | "overlay-user"
   | "latest-user-append"
-  | "fallback-system";
+  | "system-append";
 
 export interface ContextManagementReminder {
   kind: string;
@@ -614,7 +614,7 @@ export interface RemindersStrategyPayload {
   deferredCount: number;
   overlayCount: number;
   latestUserAppendCount: number;
-  fallbackSystemCount: number;
+  systemAppendCount: number;
   reminderTypes: string[];
 }
 

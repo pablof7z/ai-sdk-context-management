@@ -6,7 +6,7 @@ It can:
 
 - render host-provided reminder providers with full/delta/skip behavior
 - persist reminder state through `ReminderStateStore`
-- place reminders into `overlay-user`, `latest-user-append`, or `fallback-system`
+- place reminders into `overlay-user`, `latest-user-append`, or `system-append`
 - include built-in context-utilization and context-window-status reminder sources
 - queue and defer one-shot reminders through the runtime reminder path
 

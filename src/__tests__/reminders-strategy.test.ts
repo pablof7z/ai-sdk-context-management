@@ -11,7 +11,7 @@ const requestContext = {
   conversationId: "conv-1",
   agentId: "agent-1",
 };
-const legacyStablePlacement = ["stable", "system"].join("-") as never;
+const legacyStablePlacement = ["fallback", "system"].join("-") as never;
 
 describe("RemindersStrategy", () => {
   test("applies context utilization immediately and context-window status after usage is reported", async () => {
@@ -173,6 +173,39 @@ describe("RemindersStrategy", () => {
     expect(JSON.stringify(prepared.messages.at(-1))).toContain("Do not chain onto overlay reminders.");
     expect(JSON.stringify(prepared.messages[prepared.messages.length - 2])).toContain("Existing overlay reminder.");
     expect(JSON.stringify(prepared.messages[prepared.messages.length - 2])).not.toContain("Do not chain onto overlay reminders.");
+  });
+
+  test("inserts system-appended reminders as a secondary system message", async () => {
+    const provider: ReminderProvider<{ reminder: string }, string> = {
+      type: "todo-list",
+      placement: "system-append",
+      snapshot: async (data) => data?.reminder ?? "",
+      renderFull: async (snapshot) =>
+        snapshot.length > 0
+          ? { type: "todo-list", content: snapshot }
+          : null,
+    };
+    const runtime = createContextManagementRuntime({
+      strategies: [
+        new RemindersStrategy({
+          providers: [provider],
+        }),
+      ],
+    });
+
+    const prepared = await runtime.prepareRequest({
+      requestContext,
+      messages: makePrompt(),
+      reminderData: {
+        reminder: "Keep this in system context.",
+      },
+    });
+
+    expect(prepared.runtimeOverlays).toBeUndefined();
+    expect(prepared.messages[0]?.role).toBe("system");
+    expect(prepared.messages[1]?.role).toBe("system");
+    expect(JSON.stringify(prepared.messages[1])).toContain("Keep this in system context.");
+    expect(JSON.stringify(prepared.messages[2])).toContain("old user");
   });
 
   test("keeps non-persisted overlay reminders out of persistent runtime overlays", async () => {
